@@ -1,0 +1,39 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Android signing keys and keystores (SECURITY CRITICAL)
+src-tauri/gen/android/keystore.properties
+*.keystore
+*.jks
+*.p12
+upload-keystore.jks
+
+# Android generated files
+src-tauri/gen/android/build/
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/local.properties
+
+# Rust/Tauri build artifacts
+src-tauri/target/
