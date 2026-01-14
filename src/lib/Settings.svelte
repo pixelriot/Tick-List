@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { version } from '$app/environment';
-	import { Settings, X } from '@lucide/svelte';
+	import { Settings, X, Sun, Moon } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
+	import { resetMode, setMode } from 'mode-watcher';
 
 	let { onBack }: { onBack: () => void } = $props();
 
@@ -65,6 +67,21 @@
 			</Card.Content>
 		</Card.Root>
 
+		<!-- Regular Settings -->
+		<Card.Root>
+			<Card.Header>
+				<Card.Title>Modes</Card.Title>
+			</Card.Header>
+			<Card.Content class="align-center flex justify-center">
+				<ToggleGroup.Root type="single">
+					<ToggleGroup.Item value="light" onclick={() => setMode('light')}><Sun /></ToggleGroup.Item
+					>
+					<ToggleGroup.Item value="dark" onclick={() => setMode('dark')}><Moon /></ToggleGroup.Item>
+					<ToggleGroup.Item value="system" onclick={() => resetMode()}>System</ToggleGroup.Item>
+				</ToggleGroup.Root>
+			</Card.Content>
+		</Card.Root>
+
 		<!-- Debug Setting -->
 		<Card.Root>
 			<Card.Header>
@@ -87,13 +104,7 @@
 					</div>
 				{/if}
 			</Card.Content>
-		</Card.Root>
 
-		<!-- Backend Service -->
-		<Card.Root>
-			<Card.Header>
-				<Card.Title>Backend</Card.Title>
-			</Card.Header>
 			<Card.Content>
 				<div class="space-y-2">
 					<Label for="api-url">API URL</Label>
