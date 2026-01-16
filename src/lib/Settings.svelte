@@ -9,6 +9,7 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { resetMode, setMode } from 'mode-watcher';
+	import { openUrl } from '@tauri-apps/plugin-opener';
 
 	let { onBack }: { onBack: () => void } = $props();
 
@@ -35,6 +36,15 @@
 
 	function updateApiUrl() {
 		localStorage.setItem('apiUrl', apiUrl);
+	}
+
+	function openProjectUrl() {
+		const url = 'https://github.com/pixelriot/Tick-List';
+		if ((window as any).__TAURI__) {
+			openUrl(url);
+		} else {
+			window.open(url, '_blank');
+		}
 	}
 </script>
 
@@ -64,15 +74,22 @@
 						v{version}
 					</div>
 				</div>
+				<div class="mt-4 flex items-center justify-between">
+					<div class="space-y-0.5">
+						<Label>Code</Label>
+						<p class="text-muted-foreground text-sm">View the project on GitHub</p>
+					</div>
+					<Button class="p-0" variant="link" onclick={openProjectUrl}>GitHub</Button>
+				</div>
 			</Card.Content>
 		</Card.Root>
 
 		<!-- Regular Settings -->
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Modes</Card.Title>
+				<Card.Title>Design</Card.Title>
 			</Card.Header>
-			<Card.Content class="align-center flex justify-center">
+			<Card.Content class="">
 				<ToggleGroup.Root type="single">
 					<ToggleGroup.Item value="light" onclick={() => setMode('light')}><Sun /></ToggleGroup.Item
 					>

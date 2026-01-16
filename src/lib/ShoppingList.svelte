@@ -1,44 +1,62 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { Menu, NotebookPen } from '@lucide/svelte';
+	import { Menu, NotebookPen, Plus } from '@lucide/svelte';
 	import { Input } from './components/ui/input';
 	import { Button } from './components/ui/button';
 	import Spinner from './components/ui/spinner/spinner.svelte';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import * as Empty from '$lib/components/ui/empty/index.js';
 	import {
 		currentList,
 		saveListToStorage,
+		fetchSharedList,
 		updateItemOnServer as updateItemOnServerApi,
 		deleteItemOnServer as deleteItemOnServerApi,
-		type ShoppingItem,
-		type ShoppingList
+		type ShoppingItem
 	} from './ListsService';
 	import ItemEditModal from './ItemEditModal.svelte';
 	import ShoppingListItem from '$lib/ShoppingListItem.svelte';
 
 	let { onBackToLists }: { onBackToLists: () => void } = $props();
 
-	let list = $state<ShoppingList | null>(null);
 	let newItemName = $state('');
 	let newItemInput = $state<HTMLInputElement | null>(null);
-	let isRefreshing = $state(false);
 	let activeRequestCount = $state(0);
+	let isFetchingList = $state(false);
 
 	// Modal state for editing items
 	let editingItem = $state<ShoppingItem | null>(null);
 
-	const unsubscribe = currentList.subscribe((value) => {
-		list = value;
-	});
+	let isRefreshing = $derived(activeRequestCount > 0);
+	let sorted = $derived(
+		$currentList ? sortedItems($currentList.items) : { active: [], checked: [] }
+	);
 
-	onMount(() => {
-		return () => unsubscribe();
+	onMount(async () => {
+		if ($currentList?.sharingId) {
+			isFetchingList = true;
+			try {
+				const latestList = await fetchSharedList($currentList.sharingId);
+				if (latestList) {
+					currentList.set(latestList);
+				}
+			} catch (error) {
+				console.error('Failed to refresh shared list on mount:', error);
+			} finally {
+				isFetchingList = false;
+			}
+		}
 	});
 
 	function addItem() {
-		if (!list || !newItemName.trim()) return;
+		if (!$currentList || !newItemName.trim()) return;
 		// Check for duplicate items
-		if (list.items.some((item) => item.name.toLowerCase() === newItemName.trim().toLowerCase())) {
+		if (
+			$currentList.items.some(
+				(item) => item.name.toLowerCase() === newItemName.trim().toLowerCase()
+			)
+		) {
 			alert('An item with this name already exists in the list!');
 			return;
 		}
@@ -50,9 +68,12 @@
 				amount: 1,
 				comment: undefined
 			};
-			list.items.push(newItem);
+			currentList.update((current) => {
+				current!.items.push(newItem);
+				return current;
+			});
 			newItemName = '';
-			saveListToStorage(list);
+			saveListToStorage($currentList);
 			updateItemOnServer(newItem);
 			// Keep focus on the input after adding an item
 			newItemInput?.blur();
@@ -66,41 +87,45 @@
 	}
 
 	function toggleItem(itemId: string) {
-		const item = list?.items.find((item) => item.id === itemId);
-		if (item) {
-			item.checked = !item.checked;
-			saveListToStorage(list!);
-			updateItemOnServer(item);
+		let toggledItem: ShoppingItem | undefined;
+		currentList.update((current) => {
+			const item = current?.items.find((item) => item.id === itemId);
+			if (item) {
+				item.checked = !item.checked;
+				toggledItem = item;
+			}
+			return current;
+		});
+		if (toggledItem) {
+			saveListToStorage($currentList!);
+			updateItemOnServer(toggledItem);
 		}
 	}
 
 	async function deleteItem(itemId: string) {
-		if (!list) return;
-
-		const itemToDelete = list.items.find((item) => item.id === itemId);
-		if (!itemToDelete) return;
-
-		try {
-			// Update local state immediately for better UX
-			list.items = list.items.filter((item) => item.id !== itemId);
-			saveListToStorage(list);
-
+		let itemToDelete: ShoppingItem | undefined;
+		currentList.update((current) => {
+			if (!current) return current;
+			itemToDelete = current.items.find((item) => item.id === itemId);
+			if (itemToDelete) {
+				current.items = current.items.filter((item) => item.id !== itemId);
+			}
+			return current;
+		});
+		if (itemToDelete) {
+			saveListToStorage($currentList!);
 			// Call server API if list is shared
 			await deleteItemOnServer(itemToDelete);
-		} catch (error) {
-			console.error('Failed to delete item:', error);
-			alert('Failed to delete item. Please try again.');
 		}
 	}
 
 	async function updateItemOnServer(item: ShoppingItem) {
-		if (!list?.sharingId) return;
+		if (!$currentList?.sharingId) return;
 
 		activeRequestCount++;
-		isRefreshing = activeRequestCount > 0;
 
 		try {
-			const updatedList = await updateItemOnServerApi(list.sharingId, item);
+			const updatedList = await updateItemOnServerApi($currentList.sharingId, item);
 
 			// Only update the list if this is the last active request
 			activeRequestCount--;
@@ -108,25 +133,20 @@
 				if (updatedList) {
 					currentList.set(updatedList);
 				}
-				isRefreshing = false;
 			}
 		} catch (error) {
 			console.error('Failed to update item on server:', error);
 			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				isRefreshing = false;
-			}
 		}
 	}
 
 	async function deleteItemOnServer(item: ShoppingItem) {
-		if (!list?.sharingId) return;
+		if (!$currentList?.sharingId) return;
 
 		activeRequestCount++;
-		isRefreshing = activeRequestCount > 0;
 
 		try {
-			const updatedList = await deleteItemOnServerApi(list.sharingId, item);
+			const updatedList = await deleteItemOnServerApi($currentList.sharingId, item);
 
 			// Only update the list if this is the last active request
 			activeRequestCount--;
@@ -134,14 +154,10 @@
 				if (updatedList) {
 					currentList.set(updatedList);
 				}
-				isRefreshing = false;
 			}
 		} catch (error) {
 			console.error('Failed to delete item on server:', error);
 			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				isRefreshing = false;
-			}
 			// Optionally show a user-friendly message or implement retry logic
 		}
 	}
@@ -153,10 +169,10 @@
 	}
 
 	function saveEditedItem(editedItem: ShoppingItem) {
-		if (!editedItem || !list) return;
+		if (!editedItem || !$currentList) return;
 		// Check for duplicate names (excluding current item)
 		if (
-			list.items.some(
+			$currentList.items.some(
 				(item) =>
 					item.id !== editedItem.id && item.name.toLowerCase() === editedItem.name.toLowerCase()
 			)
@@ -165,13 +181,17 @@
 			return;
 		}
 		try {
-			// Find and replace the item in the list
-			const itemIndex = list.items.findIndex((item) => item.id === editedItem.id);
-			if (itemIndex !== -1) {
-				list.items[itemIndex] = editedItem;
-				saveListToStorage(list);
-				updateItemOnServer(editedItem);
-			}
+			currentList.update((current) => {
+				if (!current) return current;
+				// Find and replace the item in the list
+				const itemIndex = current.items.findIndex((item) => item.id === editedItem.id);
+				if (itemIndex !== -1) {
+					current.items[itemIndex] = editedItem;
+				}
+				return current;
+			});
+			saveListToStorage($currentList);
+			updateItemOnServer(editedItem);
 			closeEditModal();
 		} catch (error) {
 			console.error('Failed to save edited item:', error);
@@ -211,8 +231,8 @@
 			<Menu size={24} />
 		</Button>
 
-		{#if list}
-			<h1 class="text-xl font-bold">{list.name}</h1>
+		{#if $currentList}
+			<h1 class="text-xl font-bold">{$currentList.name}</h1>
 		{:else}
 			<h1 class="text-xl font-bold">No List Selected</h1>
 		{/if}
@@ -224,8 +244,13 @@
 		{/if}
 	</header>
 
-	{#if list}
-		{@const sorted = sortedItems(list.items)}
+	{#if isFetchingList}
+		<div class="flex-1 space-y-6 overflow-auto pb-4">
+			{#each Array(5) as _}
+				<Skeleton class="m-3 flex h-14 " />
+			{/each}
+		</div>
+	{:else if $currentList}
 		<div class="flex-1 space-y-6 overflow-auto pb-4">
 			<!-- active items  -->
 			{#if sorted.active.length > 0}
@@ -269,13 +294,12 @@
 
 			<!-- empty -->
 			{#if sorted.active.length === 0 && sorted.checked.length === 0}
-				<div
-					class="flex h-32 flex-col items-center justify-center text-center"
-					style="color: var(--muted-foreground);"
-				>
-					<p class="text-lg">Your list is empty</p>
-					<p class="mt-1 text-sm">Add some items to get started!</p>
-				</div>
+				<Empty.Root class="h-full">
+					<Empty.Header>
+						<Empty.Title>Your list is empty</Empty.Title>
+						<Empty.Description>Add some items to get started!</Empty.Description>
+					</Empty.Header>
+				</Empty.Root>
 			{/if}
 		</div>
 
@@ -288,9 +312,17 @@
 				onkeydown={(e) => e.key === 'Enter' && addItem()}
 				aria-label="New item name"
 				maxlength={100}
-				disabled={!list}
+				disabled={!$currentList}
 			/>
-			<Button onclick={addItem} aria-label="Add item">Add</Button>
+			<Button
+				class="[--radius:9999rem]"
+				variant="outline"
+				size="icon"
+				onclick={addItem}
+				aria-label="Add item"
+			>
+				<Plus />
+			</Button>
 		</footer>
 
 		<ItemEditModal item={editingItem} onSave={saveEditedItem} onClose={closeEditModal} />
