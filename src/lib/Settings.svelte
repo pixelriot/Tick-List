@@ -10,6 +10,7 @@
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { resetMode, setMode } from 'mode-watcher';
 	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { isTauri } from '@tauri-apps/api/core';
 
 	let { onBack }: { onBack: () => void } = $props();
 
@@ -40,7 +41,7 @@
 
 	function openProjectUrl() {
 		const url = 'https://github.com/pixelriot/Tick-List';
-		if ((window as any).__TAURI__) {
+		if (isTauri()) {
 			openUrl(url);
 		} else {
 			window.open(url, '_blank');
