@@ -17,6 +17,7 @@
 	} from './ListsService';
 	import ItemEditModal from './ItemEditModal.svelte';
 	import ShoppingListItem from '$lib/ShoppingListItem.svelte';
+	import { toast } from 'svelte-sonner';
 
 	let {
 		onBackToLists,
@@ -63,7 +64,7 @@
 		if (
 			currentList.items.some((item) => item.name.toLowerCase() === newItemName.trim().toLowerCase())
 		) {
-			alert('An item with this name already exists in the list!');
+			toast.error('An item with this name already exists in the list!');
 			return;
 		}
 		try {
@@ -79,17 +80,17 @@
 				items: [...currentList.items, newItem]
 			};
 			setCurrentList(updatedList);
-			newItemName = '';
 			saveListToStorage(updatedList);
 			updateItemOnServer(newItem);
-			// Keep focus on the input after adding an item
-			newItemInput?.blur();
-			setTimeout(() => {
+			newItemName = '';
+
+			// Keep focus on the input after adding an item (avoid blur to prevent keyboard flicker)
+			requestAnimationFrame(() => {
 				newItemInput?.focus();
-			}, 10);
+			});
 		} catch (error) {
 			console.error('Failed to add item:', error);
-			alert('Failed to add item. Please try again.');
+			toast.error('Failed to add item. Please try again.');
 		}
 	}
 
@@ -199,7 +200,7 @@
 			closeEditModal();
 		} catch (error) {
 			console.error('Failed to save edited item:', error);
-			alert('Failed to save changes. Please try again.');
+			toast.error('Failed to save changes. Please try again.');
 		}
 	}
 
@@ -323,6 +324,7 @@
 				variant="outline"
 				size="icon"
 				onclick={addItem}
+				tabindex={-1}
 				aria-label="Add item"
 			>
 				<Plus />

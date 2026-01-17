@@ -70,7 +70,7 @@
 				newListName = '';
 			} catch (error) {
 				console.error('Failed to add list:', error);
-				alert('Failed to add list. Please try again.');
+				toast.error('Failed to add list. Please try again.');
 			}
 		}
 	}
@@ -101,7 +101,7 @@
 			editingListName = '';
 		} catch (error) {
 			console.error('Failed to edit list:', error);
-			alert('Failed to edit list. Please try again.');
+			toast.error('Failed to edit list. Please try again.');
 		}
 	}
 
@@ -125,7 +125,7 @@
 			deleteListFromStorage(id);
 		} catch (error) {
 			console.error('Failed to delete list:', error);
-			alert('Failed to delete list. Please try again.');
+			toast.error('Failed to delete list. Please try again.');
 		}
 	}
 
@@ -147,7 +147,7 @@
 			}
 		} catch (error) {
 			console.error('Failed to fetch list:', error);
-			alert('Failed to fetch list. Please check the sharing ID and try again.');
+			toast.error('Failed to fetch list. Please try again.');
 		} finally {
 			isFetchingList = false;
 		}
