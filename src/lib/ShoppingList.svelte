@@ -8,17 +8,23 @@
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import {
-		currentList,
 		saveListToStorage,
 		fetchSharedList,
 		updateItemOnServer as updateItemOnServerApi,
 		deleteItemOnServer as deleteItemOnServerApi,
+		type ShoppingList,
 		type ShoppingItem
 	} from './ListsService';
 	import ItemEditModal from './ItemEditModal.svelte';
 	import ShoppingListItem from '$lib/ShoppingListItem.svelte';
 
-	let { onBackToLists }: { onBackToLists: () => void } = $props();
+	let {
+		onBackToLists,
+		currentList
+	}: {
+		onBackToLists: () => void;
+		currentList: ShoppingList | null;
+	} = $props();
 
 	let newItemName = $state('');
 	let newItemInput = $state<HTMLInputElement | null>(null);
@@ -29,17 +35,19 @@
 	let editingItem = $state<ShoppingItem | null>(null);
 
 	let isRefreshing = $derived(activeRequestCount > 0);
-	let sorted = $derived(
-		$currentList ? sortedItems($currentList.items) : { active: [], checked: [] }
-	);
+	let sorted = $derived(currentList ? sortedItems(currentList.items) : { active: [], checked: [] });
+
+	function setCurrentList(nextList: ShoppingList | null) {
+		currentList = nextList;
+	}
 
 	onMount(async () => {
-		if ($currentList?.sharingId) {
+		if (currentList?.sharingId) {
 			isFetchingList = true;
 			try {
-				const latestList = await fetchSharedList($currentList.sharingId);
+				const latestList = await fetchSharedList(currentList.sharingId);
 				if (latestList) {
-					currentList.set(latestList);
+					setCurrentList(latestList);
 				}
 			} catch (error) {
 				console.error('Failed to refresh shared list on mount:', error);
@@ -50,12 +58,10 @@
 	});
 
 	function addItem() {
-		if (!$currentList || !newItemName.trim()) return;
+		if (!currentList || !newItemName.trim()) return;
 		// Check for duplicate items
 		if (
-			$currentList.items.some(
-				(item) => item.name.toLowerCase() === newItemName.trim().toLowerCase()
-			)
+			currentList.items.some((item) => item.name.toLowerCase() === newItemName.trim().toLowerCase())
 		) {
 			alert('An item with this name already exists in the list!');
 			return;
@@ -68,12 +74,13 @@
 				amount: 1,
 				comment: undefined
 			};
-			currentList.update((current) => {
-				current!.items.push(newItem);
-				return current;
-			});
+			const updatedList = {
+				...currentList,
+				items: [...currentList.items, newItem]
+			};
+			setCurrentList(updatedList);
 			newItemName = '';
-			saveListToStorage($currentList);
+			saveListToStorage(updatedList);
 			updateItemOnServer(newItem);
 			// Keep focus on the input after adding an item
 			newItemInput?.blur();
@@ -88,50 +95,51 @@
 
 	function toggleItem(itemId: string) {
 		let toggledItem: ShoppingItem | undefined;
-		currentList.update((current) => {
-			const item = current?.items.find((item) => item.id === itemId);
-			if (item) {
-				item.checked = !item.checked;
-				toggledItem = item;
+		if (!currentList) return;
+		const updatedItems = currentList.items.map((item) => {
+			if (item.id === itemId) {
+				toggledItem = { ...item, checked: !item.checked };
+				return toggledItem;
 			}
-			return current;
+			return item;
 		});
-		if (toggledItem) {
-			saveListToStorage($currentList!);
-			updateItemOnServer(toggledItem);
-		}
+		if (!toggledItem) return;
+		const updatedList = { ...currentList, items: updatedItems };
+		setCurrentList(updatedList);
+		saveListToStorage(updatedList);
+		updateItemOnServer(toggledItem);
 	}
 
 	async function deleteItem(itemId: string) {
 		let itemToDelete: ShoppingItem | undefined;
-		currentList.update((current) => {
-			if (!current) return current;
-			itemToDelete = current.items.find((item) => item.id === itemId);
-			if (itemToDelete) {
-				current.items = current.items.filter((item) => item.id !== itemId);
-			}
-			return current;
-		});
+		if (!currentList) return;
+		itemToDelete = currentList.items.find((item) => item.id === itemId);
+		if (!itemToDelete) return;
+		const updatedList = {
+			...currentList,
+			items: currentList.items.filter((item) => item.id !== itemId)
+		};
+		setCurrentList(updatedList);
 		if (itemToDelete) {
-			saveListToStorage($currentList!);
+			saveListToStorage(updatedList);
 			// Call server API if list is shared
 			await deleteItemOnServer(itemToDelete);
 		}
 	}
 
 	async function updateItemOnServer(item: ShoppingItem) {
-		if (!$currentList?.sharingId) return;
+		if (!currentList?.sharingId) return;
 
 		activeRequestCount++;
 
 		try {
-			const updatedList = await updateItemOnServerApi($currentList.sharingId, item);
+			const updatedList = await updateItemOnServerApi(currentList.sharingId, item);
 
 			// Only update the list if this is the last active request
 			activeRequestCount--;
 			if (activeRequestCount === 0) {
 				if (updatedList) {
-					currentList.set(updatedList);
+					setCurrentList(updatedList);
 				}
 			}
 		} catch (error) {
@@ -141,18 +149,18 @@
 	}
 
 	async function deleteItemOnServer(item: ShoppingItem) {
-		if (!$currentList?.sharingId) return;
+		if (!currentList?.sharingId) return;
 
 		activeRequestCount++;
 
 		try {
-			const updatedList = await deleteItemOnServerApi($currentList.sharingId, item);
+			const updatedList = await deleteItemOnServerApi(currentList.sharingId, item);
 
 			// Only update the list if this is the last active request
 			activeRequestCount--;
 			if (activeRequestCount === 0) {
 				if (updatedList) {
-					currentList.set(updatedList);
+					setCurrentList(updatedList);
 				}
 			}
 		} catch (error) {
@@ -169,10 +177,10 @@
 	}
 
 	function saveEditedItem(editedItem: ShoppingItem) {
-		if (!editedItem || !$currentList) return;
+		if (!editedItem || !currentList) return;
 		// Check for duplicate names (excluding current item)
 		if (
-			$currentList.items.some(
+			currentList.items.some(
 				(item) =>
 					item.id !== editedItem.id && item.name.toLowerCase() === editedItem.name.toLowerCase()
 			)
@@ -181,16 +189,12 @@
 			return;
 		}
 		try {
-			currentList.update((current) => {
-				if (!current) return current;
-				// Find and replace the item in the list
-				const itemIndex = current.items.findIndex((item) => item.id === editedItem.id);
-				if (itemIndex !== -1) {
-					current.items[itemIndex] = editedItem;
-				}
-				return current;
-			});
-			saveListToStorage($currentList);
+			const updatedItems = currentList.items.map((item) =>
+				item.id === editedItem.id ? editedItem : item
+			);
+			const updatedList = { ...currentList, items: updatedItems };
+			setCurrentList(updatedList);
+			saveListToStorage(updatedList);
 			updateItemOnServer(editedItem);
 			closeEditModal();
 		} catch (error) {
@@ -231,8 +235,8 @@
 			<Menu size={24} />
 		</Button>
 
-		{#if $currentList}
-			<h1 class="text-xl font-bold">{$currentList.name}</h1>
+		{#if currentList}
+			<h1 class="text-xl font-bold">{currentList.name}</h1>
 		{:else}
 			<h1 class="text-xl font-bold">No List Selected</h1>
 		{/if}
@@ -250,7 +254,7 @@
 				<Skeleton class="m-3 flex h-14 " />
 			{/each}
 		</div>
-	{:else if $currentList}
+	{:else if currentList}
 		<div class="flex-1 space-y-6 overflow-auto pb-4">
 			<!-- active items  -->
 			{#if sorted.active.length > 0}
@@ -312,7 +316,7 @@
 				onkeydown={(e) => e.key === 'Enter' && addItem()}
 				aria-label="New item name"
 				maxlength={100}
-				disabled={!$currentList}
+				disabled={!currentList}
 			/>
 			<Button
 				class="[--radius:9999rem]"

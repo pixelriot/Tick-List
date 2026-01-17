@@ -1,5 +1,3 @@
-import { writable } from 'svelte/store';
-
 // Types
 export type ShoppingItem = {
     id: string;
@@ -26,18 +24,6 @@ function getApiUrl(): string {
     throw new Error('API base URL is not defined.');
 }
 
-export const currentList = writable<ShoppingList | null>(null);
-
-export const currentListId = writable<string>(
-    typeof localStorage !== 'undefined' ? localStorage.getItem('currentListId') || '' : ''
-);
-
-currentListId.subscribe((value) => {
-    if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('currentListId', value);
-    }
-});
-
 export function loadListsFromStorage(): ShoppingList[] {
     if (typeof localStorage === 'undefined') return [];
     const lists: ShoppingList[] = [];
@@ -57,6 +43,18 @@ export function loadListsFromStorage(): ShoppingList[] {
     }
     // Sort by name for consistent ordering
     return lists.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function loadListFromStorage(listId: string): ShoppingList | null {
+    if (typeof localStorage === 'undefined') return null;
+    const listData = localStorage.getItem(`shoppingList_${listId}`);
+    if (!listData) return null;
+    try {
+        return JSON.parse(listData) as ShoppingList;
+    } catch (error) {
+        console.error(`Failed to parse list data for id ${listId}:`, error);
+        return null;
+    }
 }
 
 export function saveListToStorage(list: ShoppingList) {

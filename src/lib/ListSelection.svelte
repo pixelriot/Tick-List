@@ -12,7 +12,6 @@
 	import { toast } from 'svelte-sonner';
 	import { invoke } from '@tauri-apps/api/core';
 	import {
-		currentList,
 		loadListsFromStorage,
 		saveListToStorage,
 		deleteListFromStorage,
@@ -25,7 +24,7 @@
 	let {
 		onListSelected,
 		onShowSettings
-	}: { onListSelected: () => void; onShowSettings: () => void } = $props();
+	}: { onListSelected: (listId: string) => void; onShowSettings: () => void } = $props();
 
 	let lists = $state<ShoppingList[]>([]);
 
@@ -41,10 +40,10 @@
 	});
 
 	async function selectList(id: string) {
-		$currentList = lists.find((list) => list.id === id) || null;
-		console.log('Selected list:', $state.snapshot($currentList));
-		if ($currentList) {
-			onListSelected();
+		const selectedList = lists.find((list) => list.id === id) || null;
+		console.log('Selected list:', $state.snapshot(selectedList));
+		if (selectedList) {
+			onListSelected(selectedList.id);
 		}
 	}
 
