@@ -8,13 +8,13 @@
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import {
-		saveListToStorage,
 		fetchSharedList,
 		updateItemOnServer as updateItemOnServerApi,
-		deleteItemOnServer as deleteItemOnServerApi,
-		type ShoppingList,
-		type ShoppingItem
-	} from './ListsService';
+		deleteItemOnServer as deleteItemOnServerApi
+	} from '$lib/lists/api';
+	import { saveListToStorage } from '$lib/lists/storage';
+	import { normalizeItem, type ShoppingList, type ShoppingItem } from '$lib/lists/types';
+
 	import ItemEditModal from './ItemEditModal.svelte';
 	import ShoppingListItem from '$lib/ShoppingListItem.svelte';
 	import { toast } from 'svelte-sonner';
@@ -31,15 +31,55 @@
 	let newItemInput = $state<HTMLInputElement | null>(null);
 	let activeRequestCount = $state(0);
 	let isFetchingList = $state(false);
+	let pendingItemUpdateTimer = $state<ReturnType<typeof setTimeout> | null>(null);
 
 	// Modal state for editing items
 	let editingItem = $state<ShoppingItem | null>(null);
 
 	let isRefreshing = $derived(activeRequestCount > 0);
 	let sorted = $derived(currentList ? sortedItems(currentList.items) : { active: [], checked: [] });
+	let pendingItemUpdates = $state<Record<string, ShoppingItem>>({});
 
 	function setCurrentList(nextList: ShoppingList | null) {
 		currentList = nextList;
+	}
+
+	function applyLocalListUpdate(nextList: ShoppingList) {
+		setCurrentList(nextList);
+		saveListToStorage(nextList);
+	}
+
+	function queueItemUpdate(item: ShoppingItem) {
+		if (!currentList?.sharingId) return;
+		pendingItemUpdates = { ...pendingItemUpdates, [item.id]: item };
+		if (pendingItemUpdateTimer) {
+			clearTimeout(pendingItemUpdateTimer);
+		}
+		pendingItemUpdateTimer = setTimeout(() => {
+			flushItemUpdates();
+		}, 300);
+	}
+
+	async function flushItemUpdates() {
+		if (!currentList?.sharingId) return;
+		const updates = Object.values(pendingItemUpdates);
+		if (updates.length === 0) return;
+		pendingItemUpdates = {};
+		pendingItemUpdateTimer = null;
+
+		activeRequestCount++;
+		try {
+			const latestItem = updates[updates.length - 1];
+			const updatedList = await updateItemOnServerApi(currentList.sharingId, latestItem);
+			if (updatedList) {
+				setCurrentList(updatedList);
+				saveListToStorage(updatedList);
+			}
+		} catch (error) {
+			console.error('Failed to update item on server:', error);
+		} finally {
+			activeRequestCount = Math.max(activeRequestCount - 1, 0);
+		}
 	}
 
 	onMount(async () => {
@@ -49,6 +89,7 @@
 				const latestList = await fetchSharedList(currentList.sharingId);
 				if (latestList) {
 					setCurrentList(latestList);
+					saveListToStorage(latestList);
 				}
 			} catch (error) {
 				console.error('Failed to refresh shared list on mount:', error);
@@ -60,28 +101,27 @@
 
 	function addItem() {
 		if (!currentList || !newItemName.trim()) return;
+		const trimmedName = newItemName.trim();
 		// Check for duplicate items
-		if (
-			currentList.items.some((item) => item.name.toLowerCase() === newItemName.trim().toLowerCase())
-		) {
+		if (currentList.items.some((item) => item.name.toLowerCase() === trimmedName.toLowerCase())) {
 			toast.error('An item with this name already exists in the list!');
 			return;
 		}
 		try {
-			let newItem = {
+			const newItem = normalizeItem({
 				id: crypto.randomUUID(),
-				name: newItemName.trim(),
+				name: trimmedName,
 				checked: false,
 				amount: 1,
 				comment: undefined
-			};
+			});
 			const updatedList = {
 				...currentList,
 				items: [...currentList.items, newItem]
 			};
-			setCurrentList(updatedList);
-			saveListToStorage(updatedList);
+			applyLocalListUpdate(updatedList);
 			updateItemOnServer(newItem);
+
 			newItemName = '';
 
 			// Keep focus on the input after adding an item (avoid blur to prevent keyboard flicker)
@@ -99,16 +139,16 @@
 		if (!currentList) return;
 		const updatedItems = currentList.items.map((item) => {
 			if (item.id === itemId) {
-				toggledItem = { ...item, checked: !item.checked };
-				return toggledItem;
+				const nextItem = normalizeItem({ ...item, checked: !item.checked });
+				toggledItem = nextItem;
+				return nextItem;
 			}
 			return item;
 		});
 		if (!toggledItem) return;
 		const updatedList = { ...currentList, items: updatedItems };
-		setCurrentList(updatedList);
-		saveListToStorage(updatedList);
-		updateItemOnServer(toggledItem);
+		applyLocalListUpdate(updatedList);
+		queueItemUpdate(toggledItem);
 	}
 
 	async function deleteItem(itemId: string) {
@@ -116,61 +156,37 @@
 		if (!currentList) return;
 		itemToDelete = currentList.items.find((item) => item.id === itemId);
 		if (!itemToDelete) return;
-		if (!confirm(`Delete "${itemToDelete.name}"?`)) {
-			return;
-		}
 		const updatedList = {
 			...currentList,
 			items: currentList.items.filter((item) => item.id !== itemId)
 		};
-		setCurrentList(updatedList);
+		applyLocalListUpdate(updatedList);
 		if (itemToDelete) {
-			saveListToStorage(updatedList);
 			// Call server API if list is shared
 			await deleteItemOnServer(itemToDelete);
 		}
 	}
 
-	async function updateItemOnServer(item: ShoppingItem) {
-		if (!currentList?.sharingId) return;
-
-		activeRequestCount++;
-
-		try {
-			const updatedList = await updateItemOnServerApi(currentList.sharingId, item);
-
-			// Only update the list if this is the last active request
-			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				if (updatedList) {
-					setCurrentList(updatedList);
-				}
-			}
-		} catch (error) {
-			console.error('Failed to update item on server:', error);
-			activeRequestCount--;
-		}
+	function updateItemOnServer(item: ShoppingItem) {
+		queueItemUpdate(item);
 	}
 
 	async function deleteItemOnServer(item: ShoppingItem) {
 		if (!currentList?.sharingId) return;
-
 		activeRequestCount++;
-
 		try {
 			const updatedList = await deleteItemOnServerApi(currentList.sharingId, item);
 
 			// Only update the list if this is the last active request
-			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				if (updatedList) {
-					setCurrentList(updatedList);
-				}
+			if (activeRequestCount === 1 && updatedList) {
+				setCurrentList(updatedList);
+				saveListToStorage(updatedList);
 			}
 		} catch (error) {
 			console.error('Failed to delete item on server:', error);
-			activeRequestCount--;
-			// Optionally show a user-friendly message or implement retry logic
+			toast.error('Failed to delete item on server. Please try again.');
+		} finally {
+			activeRequestCount = Math.max(activeRequestCount - 1, 0);
 		}
 	}
 
@@ -189,17 +205,18 @@
 					item.id !== editedItem.id && item.name.toLowerCase() === editedItem.name.toLowerCase()
 			)
 		) {
-			alert('An item with this name already exists in the list!');
+			toast.error('An item with this name already exists in the list!');
 			return;
 		}
 		try {
+			const normalizedItem = normalizeItem(editedItem);
 			const updatedItems = currentList.items.map((item) =>
-				item.id === editedItem.id ? editedItem : item
+				item.id === normalizedItem.id ? normalizedItem : item
 			);
 			const updatedList = { ...currentList, items: updatedItems };
-			setCurrentList(updatedList);
-			saveListToStorage(updatedList);
-			updateItemOnServer(editedItem);
+			applyLocalListUpdate(updatedList);
+			updateItemOnServer(normalizedItem);
+
 			closeEditModal();
 		} catch (error) {
 			console.error('Failed to save edited item:', error);
@@ -332,6 +349,7 @@
 				size="icon"
 				onclick={addItem}
 				tabindex={-1}
+				disabled={!newItemName.trim()}
 				aria-label="Add item"
 			>
 				<Plus />

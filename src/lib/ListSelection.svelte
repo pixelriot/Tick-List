@@ -11,15 +11,13 @@
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { toast } from 'svelte-sonner';
 	import { invoke } from '@tauri-apps/api/core';
+	import { fetchSharedList, shareList, updateSharedListName } from '$lib/lists/api';
 	import {
 		loadListsFromStorage,
 		saveListToStorage,
-		deleteListFromStorage,
-		fetchSharedList,
-		shareList,
-		updateSharedListName,
-		type ShoppingList
-	} from './ListsService';
+		deleteListFromStorage
+	} from '$lib/lists/storage';
+	import { createList, type ShoppingList } from '$lib/lists/types';
 
 	let {
 		onListSelected,
@@ -31,6 +29,7 @@
 	let isFetchingList = $state(false);
 
 	let newListName = $state('');
+	let listNameError = $state('');
 
 	let editingListId = $state<string | null>(null);
 	let editingListName = $state('');
@@ -49,29 +48,36 @@
 
 	function addList() {
 		const trimmedName = newListName.trim();
-		if (!trimmedName) return;
+		if (!trimmedName) {
+			listNameError = 'Enter a list name or sharing ID.';
+			return;
+		}
+
+		listNameError = '';
 
 		// Check if trimmedName is exactly 8 numbers
 		if (/^\d{8}$/.test(trimmedName)) {
 			fetchList(trimmedName);
 			newListName = '';
-		} else {
-			try {
-				console.log('Adding new list:', trimmedName);
+			return;
+		}
 
-				let newList = {
-					id: crypto.randomUUID(),
-					name: trimmedName,
-					items: []
-				} as ShoppingList;
-				saveListToStorage(newList);
-				lists.push(newList);
+		if (lists.some((list) => list.name.toLowerCase() === trimmedName.toLowerCase())) {
+			listNameError = 'A list with this name already exists.';
+			return;
+		}
 
-				newListName = '';
-			} catch (error) {
-				console.error('Failed to add list:', error);
-				toast.error('Failed to add list. Please try again.');
-			}
+		try {
+			console.log('Adding new list:', trimmedName);
+
+			const newList = createList(trimmedName);
+			saveListToStorage(newList);
+			lists = [...lists, newList];
+
+			newListName = '';
+		} catch (error) {
+			console.error('Failed to add list:', error);
+			toast.error('Failed to add list. Please try again.');
 		}
 	}
 
@@ -86,12 +92,23 @@
 		try {
 			const editedList: ShoppingList | undefined = lists.find((list) => list.id === editingListId);
 			if (editedList) {
-				editedList.name = trimmedName;
-				saveListToStorage(editedList);
+				if (
+					lists.some(
+						(list) =>
+							list.id !== editedList.id && list.name.toLowerCase() === trimmedName.toLowerCase()
+					)
+				) {
+					listNameError = 'A list with this name already exists.';
+					return;
+				}
 
-				if (editedList.sharingId) {
+				const updatedList = { ...editedList, name: trimmedName };
+				saveListToStorage(updatedList);
+				lists = lists.map((list) => (list.id === editedList.id ? updatedList : list));
+
+				if (updatedList.sharingId) {
 					// Update the list on the server if it is shared
-					const success = await updateSharedListName(editedList.sharingId, trimmedName);
+					const success = await updateSharedListName(updatedList.sharingId, trimmedName);
 					if (!success) {
 						throw new Error('Failed to update shared list name');
 					}
@@ -108,6 +125,7 @@
 	function cancelEdit() {
 		editingListId = null;
 		editingListName = '';
+		listNameError = '';
 	}
 
 	function deleteList(id: string) {
@@ -139,10 +157,10 @@
 				const existingList = lists.find((list) => list.id === fetchedList.id);
 				if (existingList) {
 					console.log('updating existing list');
-					Object.assign(existingList, fetchedList);
+					lists = lists.map((list) => (list.id === fetchedList.id ? fetchedList : list));
 				} else {
 					console.log('new list fetched');
-					lists.push(fetchedList);
+					lists = [...lists, fetchedList];
 				}
 			}
 		} catch (error) {
@@ -157,11 +175,7 @@
 		console.log('Share list:', $state.snapshot(list));
 		const updatedList = await shareList(list);
 		if (updatedList) {
-			// Update the list in the local array
-			const index = lists.findIndex((l) => l.id === list.id);
-			if (index !== -1) {
-				lists[index] = updatedList;
-			}
+			lists = lists.map((entry) => (entry.id === list.id ? updatedList : entry));
 		}
 	}
 
@@ -220,12 +234,18 @@
 			type="text"
 			placeholder="Enter a new list name or a sharing ID"
 			bind:value={newListName}
+			oninput={() => {
+				if (listNameError) listNameError = '';
+			}}
 			onkeydown={(e) => e.key === 'Enter' && addList()}
 			aria-label="New list name or list id"
 			maxlength={100}
 		/>
-		<Button onclick={addList}>Add</Button>
+		<Button onclick={addList} disabled={!newListName.trim()}>Add</Button>
 	</form>
+	{#if listNameError}
+		<p class="px-2 text-sm text-red-600">{listNameError}</p>
+	{/if}
 
 	{#if lists.length === 0 && !isFetchingList}
 		<Empty.Root>

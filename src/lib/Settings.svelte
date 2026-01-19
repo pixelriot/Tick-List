@@ -11,12 +11,14 @@
 	import { resetMode, setMode } from 'mode-watcher';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { isTauri } from '@tauri-apps/api/core';
+	import { isValidApiUrl } from '$lib/lists/api';
 
 	let { onBack }: { onBack: () => void } = $props();
 
 	let debugMode = $state(false);
 	let showRestartHint = $state(false);
 	let apiUrl = $state('');
+	let apiUrlError = $state('');
 
 	onMount(() => {
 		// Load debug setting from localStorage
@@ -25,6 +27,7 @@
 		// Load API URL from localStorage
 		const savedApiUrl = localStorage.getItem('apiUrl');
 		apiUrl = savedApiUrl || '';
+		apiUrlError = '';
 	});
 
 	function toggleDebug() {
@@ -36,7 +39,17 @@
 	}
 
 	function updateApiUrl() {
-		localStorage.setItem('apiUrl', apiUrl);
+		const trimmed = apiUrl.trim();
+		if (!trimmed) {
+			apiUrlError = 'API URL is required for sharing.';
+			return;
+		}
+		if (!isValidApiUrl(trimmed)) {
+			apiUrlError = 'Use a valid http or https URL.';
+			return;
+		}
+		apiUrlError = '';
+		localStorage.setItem('apiUrl', trimmed);
 	}
 
 	function openProjectUrl() {
@@ -132,7 +145,11 @@
 						onchange={updateApiUrl}
 						placeholder="https://api.example.com/api"
 					/>
-					<p class="text-muted-foreground text-sm">Url for data sharing & synchronization</p>
+					{#if apiUrlError}
+						<p class="text-sm text-red-600">{apiUrlError}</p>
+					{:else}
+						<p class="text-muted-foreground text-sm">Url for data sharing & synchronization</p>
+					{/if}
 				</div>
 			</Card.Content>
 		</Card.Root>

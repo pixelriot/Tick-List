@@ -3,7 +3,8 @@
 	import ListSelection from '$lib/ListSelection.svelte';
 	import ShoppingList from '$lib/ShoppingList.svelte';
 	import Settings from '$lib/Settings.svelte';
-	import { loadListFromStorage, type ShoppingList as ShoppingListType } from '$lib/ListsService';
+	import { loadListFromStorage } from '$lib/lists/storage';
+	import type { ShoppingList as ShoppingListType } from '$lib/lists/types';
 
 	const CURRENT_LIST_ID_KEY = 'currentListId';
 

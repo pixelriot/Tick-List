@@ -5,7 +5,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Button } from './components/ui/button';
 	import * as Item from '$lib/components/ui/item/index.js';
-	import type { ShoppingItem } from './ListsService';
+	import type { ShoppingItem } from '$lib/lists/types';
 
 	let {
 		item,

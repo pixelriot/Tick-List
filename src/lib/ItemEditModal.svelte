@@ -3,7 +3,8 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from './components/ui/label';
-	import type { ShoppingItem } from './ListsService';
+	import { toast } from 'svelte-sonner';
+	import type { ShoppingItem } from '$lib/lists/types';
 
 	let {
 		item = null,
@@ -47,19 +48,22 @@
 	});
 
 	function handleSave() {
-		if (editName.trim() && item) {
-			if (editAmount <= 0) {
-				editAmount = 1;
-			}
-			// Create and return the edited item copy
-			const editedItem: ShoppingItem = {
-				...item,
-				name: editName.trim(),
-				amount: editAmount,
-				comment: editComment.trim() || undefined
-			};
-			onSave(editedItem);
+		if (!item) return;
+		if (!editName.trim()) {
+			toast.error('Item name is required.');
+			return;
 		}
+		if (editAmount <= 0) {
+			editAmount = 1;
+		}
+		// Create and return the edited item copy
+		const editedItem: ShoppingItem = {
+			...item,
+			name: editName.trim(),
+			amount: editAmount,
+			comment: editComment.trim() || undefined
+		};
+		onSave(editedItem);
 	}
 
 	function handleClose() {
@@ -69,6 +73,9 @@
 
 	function handleDelete() {
 		if (!item) return;
+		if (!confirm(`Delete "${item.name}"?`)) {
+			return;
+		}
 		isDeleting = true;
 		onDelete(item);
 		handleClose();
