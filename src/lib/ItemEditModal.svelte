@@ -8,17 +8,20 @@
 	let {
 		item = null,
 		onSave,
-		onClose
+		onClose,
+		onDelete
 	}: {
 		item: ShoppingItem | null;
 		onSave: (editedItem: ShoppingItem) => void;
 		onClose: () => void;
+		onDelete: (itemToDelete: ShoppingItem) => void;
 	} = $props();
 
 	let editName = $state('');
 	let editAmount = $state(1);
 	let editComment = $state('');
 	let open = $state(false);
+	let isDeleting = $state(false);
 
 	// Update form when item changes
 	$effect(() => {
@@ -35,6 +38,10 @@
 	// Handle when drawer is closed externally (e.g., clicking outside)
 	$effect(() => {
 		if (!open && item !== null) {
+			if (!isDeleting) {
+				handleSave();
+			}
+			isDeleting = false;
 			onClose();
 		}
 	});
@@ -58,6 +65,13 @@
 	function handleClose() {
 		open = false;
 		onClose();
+	}
+
+	function handleDelete() {
+		if (!item) return;
+		isDeleting = true;
+		onDelete(item);
+		handleClose();
 	}
 </script>
 
@@ -83,8 +97,11 @@
 			</div>
 		</div>
 		<Drawer.Footer>
-			<Button onclick={handleSave}>Save</Button>
-			<Drawer.Close onclick={handleClose}>Cancel</Drawer.Close>
+			<div class="flex w-full flex-col gap-2">
+				<Button variant="ghost" class="text-red-600" onclick={handleDelete} disabled={!item}
+					>Delete Item</Button
+				>
+			</div>
 		</Drawer.Footer>
 	</Drawer.Content>
 </Drawer.Root>

@@ -116,6 +116,9 @@
 		if (!currentList) return;
 		itemToDelete = currentList.items.find((item) => item.id === itemId);
 		if (!itemToDelete) return;
+		if (!confirm(`Delete "${itemToDelete.name}"?`)) {
+			return;
+		}
 		const updatedList = {
 			...currentList,
 			items: currentList.items.filter((item) => item.id !== itemId)
@@ -208,6 +211,12 @@
 		editingItem = null;
 	}
 
+	function deleteEditingItem(itemToDelete: ShoppingItem) {
+		if (!itemToDelete) return;
+		deleteItem(itemToDelete.id);
+		closeEditModal();
+	}
+
 	// Sort: active items alphabetically, checked items at bottom
 	function sortedItems(items: ShoppingItem[]) {
 		if (!items || items.length === 0) {
@@ -265,7 +274,6 @@
 							<ShoppingListItem
 								{item}
 								onToggle={() => toggleItem(item.id)}
-								onDelete={() => deleteItem(item.id)}
 								onEdit={() => openEditModal(item)}
 							/>
 						</li>
@@ -289,7 +297,6 @@
 							<ShoppingListItem
 								{item}
 								onToggle={() => toggleItem(item.id)}
-								onDelete={() => deleteItem(item.id)}
 								onEdit={() => openEditModal(item)}
 							/>
 						</li>
@@ -331,7 +338,12 @@
 			</Button>
 		</footer>
 
-		<ItemEditModal item={editingItem} onSave={saveEditedItem} onClose={closeEditModal} />
+		<ItemEditModal
+			item={editingItem}
+			onSave={saveEditedItem}
+			onClose={closeEditModal}
+			onDelete={deleteEditingItem}
+		/>
 	{:else}
 		<div class="m-auto flex h-full w-full flex-col items-center justify-center p-8 text-center">
 			<NotebookPen size={48} />
