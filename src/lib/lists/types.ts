@@ -4,6 +4,8 @@ export type ShoppingItem = {
 	checked: boolean;
 	amount: number;
 	comment?: string;
+	updatedAt?: string;
+	deletedAt?: string | null;
 };
 
 export type ShoppingList = {
@@ -11,6 +13,8 @@ export type ShoppingList = {
 	name: string;
 	items: ShoppingItem[];
 	sharingId?: string;
+	updatedAt?: string;
+	deletedAt?: string | null;
 };
 
 export function normalizeItem(item: ShoppingItem): ShoppingItem {
@@ -23,7 +27,9 @@ export function normalizeItem(item: ShoppingItem): ShoppingItem {
 		name: normalizedName,
 		checked: Boolean(item.checked),
 		amount,
-		comment: normalizedComment || undefined
+		comment: normalizedComment || undefined,
+		updatedAt: item.updatedAt,
+		deletedAt: item.deletedAt ?? null
 	};
 }
 
@@ -36,7 +42,9 @@ export function normalizeList(list: ShoppingList): ShoppingList {
 		id: list.id,
 		name: normalizedName,
 		items,
-		sharingId: normalizedSharingId || undefined
+		sharingId: normalizedSharingId || undefined,
+		updatedAt: list.updatedAt,
+		deletedAt: list.deletedAt ?? null
 	};
 }
 

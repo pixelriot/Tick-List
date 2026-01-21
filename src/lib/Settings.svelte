@@ -6,28 +6,20 @@
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { resetMode, setMode } from 'mode-watcher';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { isTauri } from '@tauri-apps/api/core';
-	import { isValidApiUrl } from '$lib/lists/api';
 
 	let { onBack }: { onBack: () => void } = $props();
 
 	let debugMode = $state(false);
 	let showRestartHint = $state(false);
-	let apiUrl = $state('');
-	let apiUrlError = $state('');
 
 	onMount(() => {
 		// Load debug setting from localStorage
 		const savedDebug = localStorage.getItem('debug');
 		debugMode = savedDebug === 'true';
-		// Load API URL from localStorage
-		const savedApiUrl = localStorage.getItem('apiUrl');
-		apiUrl = savedApiUrl || '';
-		apiUrlError = '';
 	});
 
 	function toggleDebug() {
@@ -36,20 +28,6 @@
 		localStorage.setItem('debug', debugMode.toString());
 		// Show restart hint
 		showRestartHint = true;
-	}
-
-	function updateApiUrl() {
-		const trimmed = apiUrl.trim();
-		if (!trimmed) {
-			apiUrlError = 'API URL is required for sharing.';
-			return;
-		}
-		if (!isValidApiUrl(trimmed)) {
-			apiUrlError = 'Use a valid http or https URL.';
-			return;
-		}
-		apiUrlError = '';
-		localStorage.setItem('apiUrl', trimmed);
 	}
 
 	function openProjectUrl() {
@@ -136,22 +114,6 @@
 				{/if}
 			</Card.Content>
 
-			<Card.Content>
-				<div class="space-y-2">
-					<Label for="api-url">API URL</Label>
-					<Input
-						id="api-url"
-						bind:value={apiUrl}
-						onchange={updateApiUrl}
-						placeholder="https://api.example.com/api"
-					/>
-					{#if apiUrlError}
-						<p class="text-sm text-red-600">{apiUrlError}</p>
-					{:else}
-						<p class="text-muted-foreground text-sm">Url for data sharing & synchronization</p>
-					{/if}
-				</div>
-			</Card.Content>
 		</Card.Root>
 	</div>
 </main>

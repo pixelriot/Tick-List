@@ -14,6 +14,21 @@ Create and share your shopping and other lists with your family and friends.
 npm install
 ```
 
+### Supabase Sync Setup
+1. Create a Supabase project and grab the URL + anon key.
+2. Copy `.env.example` to `.env` and set:
+   - `PUBLIC_SUPABASE_URL`
+   - `PUBLIC_SUPABASE_ANON_KEY`
+3. Run the SQL in `src/lib/supabase/schema.sql` inside the Supabase SQL editor.
+4. Enable Realtime for `list_items` tables.
+
+### Supabase Schema Notes
+- `lists` stores the list metadata; `list_items` stores the items; `list_shares` maps share codes to list ids.
+- `deleted_at` is used for soft deletes so clients can reconcile changes reliably.
+- `updated_at` is used for last-write-wins conflict resolution (latest timestamp wins).
+- The `touch_updated_at` trigger updates `updated_at` on every update for consistent server timestamps.
+- Indexes on `list_id`, `updated_at`, and `share_code` keep list sync and share lookups fast.
+
 ### Development Commands
 
 #### Web Development

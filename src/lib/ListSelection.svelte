@@ -11,7 +11,7 @@
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { toast } from 'svelte-sonner';
 	import { invoke } from '@tauri-apps/api/core';
-	import { fetchSharedList, shareList, updateSharedListName } from '$lib/lists/api';
+	import { fetchSharedList, shareList, updateSharedListName } from '$lib/lists/supabase';
 	import {
 		loadListsFromStorage,
 		saveListToStorage,
@@ -55,8 +55,8 @@
 
 		listNameError = '';
 
-		// Check if trimmedName is exactly 8 numbers
-		if (/^\d{8}$/.test(trimmedName)) {
+		// Check if trimmedName is a share code
+		if (/^[A-Z0-9]{6,12}$/i.test(trimmedName)) {
 			fetchList(trimmedName);
 			newListName = '';
 			return;
@@ -108,7 +108,7 @@
 
 				if (updatedList.sharingId) {
 					// Update the list on the server if it is shared
-					const success = await updateSharedListName(updatedList.sharingId, trimmedName);
+					const success = await updateSharedListName(updatedList.id, trimmedName);
 					if (!success) {
 						throw new Error('Failed to update shared list name');
 					}
@@ -151,7 +151,7 @@
 		console.log('Fetching list:', listId);
 		isFetchingList = true;
 		try {
-			const fetchedList = await fetchSharedList(listId);
+			const fetchedList = await fetchSharedList(listId.toUpperCase());
 			if (fetchedList) {
 				//check if list already exists
 				const existingList = lists.find((list) => list.id === fetchedList.id);
@@ -162,6 +162,7 @@
 					console.log('new list fetched');
 					lists = [...lists, fetchedList];
 				}
+				saveListToStorage(fetchedList);
 			}
 		} catch (error) {
 			console.error('Failed to fetch list:', error);
@@ -176,6 +177,7 @@
 		const updatedList = await shareList(list);
 		if (updatedList) {
 			lists = lists.map((entry) => (entry.id === list.id ? updatedList : entry));
+			saveListToStorage(updatedList);
 		}
 	}
 
