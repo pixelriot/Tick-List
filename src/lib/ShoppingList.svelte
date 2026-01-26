@@ -264,7 +264,7 @@
 	}
 </script>
 
-<main class="flex h-screen w-full flex-col">
+<main class="flex h-dvh w-full flex-col overflow-hidden">
 	<!-- Shopping List Header -->
 	<header class="flex h-[60px] w-full flex-row items-center gap-2 px-2">
 		<Button

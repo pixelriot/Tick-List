@@ -20,20 +20,20 @@ type ItemRow = {
 	deleted_at: string | null;
 };
 
-const SHARE_CODE_LENGTH = 8;
-const SHARE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const SHARE_CODE_PREFIX = 'TL';
+const SHARE_CODE_DIGITS = 6;
 
 type ListInsert = Database['public']['Tables']['lists']['Insert'];
 type ListItemInsert = Database['public']['Tables']['list_items']['Insert'];
 type ListShareInsert = Database['public']['Tables']['list_shares']['Insert'];
 
 function generateShareCode(): string {
-	const bytes = crypto.getRandomValues(new Uint8Array(SHARE_CODE_LENGTH));
-	let code = '';
+	const bytes = crypto.getRandomValues(new Uint8Array(SHARE_CODE_DIGITS));
+	let digits = '';
 	for (const value of bytes) {
-		code += SHARE_CODE_ALPHABET[value % SHARE_CODE_ALPHABET.length];
+		digits += (value % 10).toString();
 	}
-	return code;
+	return SHARE_CODE_PREFIX + digits;
 }
 
 function mapListRow(row: ListRow, items: ShoppingItem[]): ShoppingList {

@@ -55,9 +55,9 @@
 
 		listNameError = '';
 
-		// Check if trimmedName is a share code
-		if (/^[A-Z0-9]{6,12}$/i.test(trimmedName)) {
-			fetchList(trimmedName);
+		// Check if trimmedName is a share code (format: TL followed by 6 digits)
+		if (/^TL\d{6}$/i.test(trimmedName)) {
+			fetchList(trimmedName.toUpperCase());
 			newListName = '';
 			return;
 		}
