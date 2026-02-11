@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { Menu, NotebookPen, Plus, WifiOff } from '@lucide/svelte';
+	import { Menu, NotebookPen, Plus, WifiOff, RefreshCw } from '@lucide/svelte';
 	import { Input } from './components/ui/input';
 	import { Button } from './components/ui/button';
 	import Spinner from './components/ui/spinner/spinner.svelte';
@@ -287,22 +287,16 @@
 
 		{#if isRefreshing}
 			<Spinner />
+		{:else if currentList?.sharingId && hasSyncError}
+			<Button variant="outline" size="icon" onclick={refreshConnectivity}>
+				<RefreshCw />
+			</Button>
 		{/if}
 	</header>
 
-	{#if currentList?.sharingId && hasSyncError}
-		<div
-			class="mx-2 mb-2 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
-		>
-			<WifiOff size={16} />
-			<span>Sync paused. Check your connection and try again.</span>
-			<Button size="sm" variant="ghost" onclick={refreshConnectivity}>Retry</Button>
-		</div>
-	{/if}
-
 	{#if isFetchingList}
 		<div class="flex-1 space-y-6 overflow-auto pb-4">
-			{#each Array(5) as _}
+			{#each Array(10) as _}
 				<Skeleton class="m-3 flex h-14 " />
 			{/each}
 		</div>
