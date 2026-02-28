@@ -1,4 +1,4 @@
-/src/main/java/io/github/twinpixel/ticklist/generated
+/src/main/java/io/github/twinpixel/tick_list/generated
 /src/main/jniLibs/**/*.so
 /src/main/assets/tauri.conf.json
 /tauri.build.gradle.kts

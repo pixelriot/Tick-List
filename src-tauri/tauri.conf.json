@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Tick List",
-  "version": "0.7.2",
-  "identifier": "io.github.twinpixel.ticklist",
+  "version": "0.7.8",
+  "identifier": "io.github.twinpixel.tick-list",
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://127.0.0.1:5173",

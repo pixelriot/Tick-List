@@ -1,26 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { version } from '$app/environment';
-	import { Settings, X } from '@lucide/svelte';
+	import { Settings, X, Sun, Moon } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
+	import { resetMode, setMode } from 'mode-watcher';
+	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { isTauri } from '@tauri-apps/api/core';
 
 	let { onBack }: { onBack: () => void } = $props();
 
 	let debugMode = $state(false);
 	let showRestartHint = $state(false);
-	let apiUrl = $state('');
 
 	onMount(() => {
 		// Load debug setting from localStorage
 		const savedDebug = localStorage.getItem('debug');
 		debugMode = savedDebug === 'true';
-		// Load API URL from localStorage
-		const savedApiUrl = localStorage.getItem('apiUrl');
-		apiUrl = savedApiUrl || '';
 	});
 
 	function toggleDebug() {
@@ -31,8 +30,13 @@
 		showRestartHint = true;
 	}
 
-	function updateApiUrl() {
-		localStorage.setItem('apiUrl', apiUrl);
+	function openProjectUrl() {
+		const url = 'https://github.com/pixelriot/Tick-List';
+		if (isTauri()) {
+			openUrl(url);
+		} else {
+			window.open(url, '_blank');
+		}
 	}
 </script>
 
@@ -62,6 +66,28 @@
 						v{version}
 					</div>
 				</div>
+				<div class="mt-4 flex items-center justify-between">
+					<div class="space-y-0.5">
+						<Label>Code</Label>
+						<p class="text-muted-foreground text-sm">View the project on GitHub</p>
+					</div>
+					<Button class="p-0" variant="link" onclick={openProjectUrl}>GitHub</Button>
+				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<!-- Regular Settings -->
+		<Card.Root>
+			<Card.Header>
+				<Card.Title>Design</Card.Title>
+			</Card.Header>
+			<Card.Content class="">
+				<ToggleGroup.Root type="single">
+					<ToggleGroup.Item value="light" onclick={() => setMode('light')}><Sun /></ToggleGroup.Item
+					>
+					<ToggleGroup.Item value="dark" onclick={() => setMode('dark')}><Moon /></ToggleGroup.Item>
+					<ToggleGroup.Item value="system" onclick={() => resetMode()}>System</ToggleGroup.Item>
+				</ToggleGroup.Root>
 			</Card.Content>
 		</Card.Root>
 
@@ -87,25 +113,7 @@
 					</div>
 				{/if}
 			</Card.Content>
-		</Card.Root>
 
-		<!-- Backend Service -->
-		<Card.Root>
-			<Card.Header>
-				<Card.Title>Backend</Card.Title>
-			</Card.Header>
-			<Card.Content>
-				<div class="space-y-2">
-					<Label for="api-url">API URL</Label>
-					<Input
-						id="api-url"
-						bind:value={apiUrl}
-						onchange={updateApiUrl}
-						placeholder="https://api.example.com/api"
-					/>
-					<p class="text-muted-foreground text-sm">Url for data sharing & synchronization</p>
-				</div>
-			</Card.Content>
 		</Card.Root>
 	</div>
 </main>

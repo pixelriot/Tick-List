@@ -1,204 +1,270 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
-	import { Menu, NotebookPen } from '@lucide/svelte';
+	import { Menu, NotebookPen, Plus, WifiOff, RefreshCw } from '@lucide/svelte';
 	import { Input } from './components/ui/input';
 	import { Button } from './components/ui/button';
 	import Spinner from './components/ui/spinner/spinner.svelte';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
+	import * as Empty from '$lib/components/ui/empty/index.js';
+	import { toast } from 'svelte-sonner';
+	import { isSupabaseConfigured, supabase } from '$lib/supabase/client';
+	import type { RealtimeChannel } from '@supabase/supabase-js';
 	import {
-		currentList,
-		saveListToStorage,
-		updateItemOnServer as updateItemOnServerApi,
-		deleteItemOnServer as deleteItemOnServerApi,
-		type ShoppingItem,
-		type ShoppingList
-	} from './ListsService';
+		deleteSharedItem,
+		fetchSharedList,
+		getSupabaseHealth,
+		upsertSharedItem
+	} from '$lib/lists/supabase';
+	import { saveListToStorage } from '$lib/lists/storage';
+	import { normalizeItem, type ShoppingList, type ShoppingItem } from '$lib/lists/types';
 	import ItemEditModal from './ItemEditModal.svelte';
 	import ShoppingListItem from '$lib/ShoppingListItem.svelte';
 
-	let { onBackToLists }: { onBackToLists: () => void } = $props();
+	let {
+		onBackToLists,
+		currentList
+	}: {
+		onBackToLists: () => void;
+		currentList: ShoppingList | null;
+	} = $props();
 
-	let list = $state<ShoppingList | null>(null);
 	let newItemName = $state('');
 	let newItemInput = $state<HTMLInputElement | null>(null);
-	let isRefreshing = $state(false);
-	let activeRequestCount = $state(0);
 
-	// Modal state for editing items
+	let isFetchingList = $state(false);
+	let activeRequestCount = $state(0);
+	let pendingItemUpdateTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+	let pendingItemUpdates = $state<Record<string, ShoppingItem>>({});
+	let activeSubscription = $state<RealtimeChannel | null>(null);
+	let hasSyncError = $state(false);
+
 	let editingItem = $state<ShoppingItem | null>(null);
 
-	const unsubscribe = currentList.subscribe((value) => {
-		list = value;
+	let isRefreshing = $derived(activeRequestCount > 0);
+	let sortedList = $derived.by(() => {
+		if (!currentList?.items?.length) return { active: [], checked: [] };
+		const active = currentList.items
+			.filter((i) => !i.checked)
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const checked = currentList.items
+			.filter((i) => i.checked)
+			.sort((a, b) => a.name.localeCompare(b.name));
+		return { active, checked };
 	});
 
-	onMount(() => {
-		return () => unsubscribe();
-	});
-
-	function addItem() {
-		if (!list || !newItemName.trim()) return;
-		// Check for duplicate items
-		if (list.items.some((item) => item.name.toLowerCase() === newItemName.trim().toLowerCase())) {
-			alert('An item with this name already exists in the list!');
+	onMount(async () => {
+		if (!currentList?.sharingId) return;
+		if (!isSupabaseConfigured || !supabase) {
+			hasSyncError = true;
 			return;
 		}
-		try {
-			let newItem = {
-				id: crypto.randomUUID(),
-				name: newItemName.trim(),
-				checked: false,
-				amount: 1,
-				comment: undefined
-			};
-			list.items.push(newItem);
-			newItemName = '';
-			saveListToStorage(list);
-			updateItemOnServer(newItem);
-			// Keep focus on the input after adding an item
-			newItemInput?.blur();
-			setTimeout(() => {
-				newItemInput?.focus();
-			}, 10);
-		} catch (error) {
-			console.error('Failed to add item:', error);
-			alert('Failed to add item. Please try again.');
+		await refreshSharedList();
+		await startRealtime();
+	});
+
+	onDestroy(() => {
+		activeSubscription?.unsubscribe();
+	});
+
+	function applyLocalListUpdate(nextList: ShoppingList) {
+		currentList = nextList;
+		saveListToStorage(nextList);
+	}
+
+	function mergeIncomingItem(item: ShoppingItem) {
+		if (!currentList) return;
+		const existing = currentList.items.find((entry) => entry.id === item.id);
+
+		if (existing?.updatedAt && item.updatedAt) {
+			if (new Date(item.updatedAt).getTime() <= new Date(existing.updatedAt).getTime()) return;
 		}
+
+		if (item.deletedAt) {
+			applyLocalListUpdate({
+				...currentList,
+				items: currentList.items.filter((e) => e.id !== item.id)
+			});
+		} else if (!existing) {
+			applyLocalListUpdate({ ...currentList, items: [...currentList.items, item] });
+		} else {
+			applyLocalListUpdate({
+				...currentList,
+				items: currentList.items.map((e) => (e.id === item.id ? item : e))
+			});
+		}
+	}
+
+	function queueItemUpdate(item: ShoppingItem) {
+		if (!currentList?.sharingId) return;
+		pendingItemUpdates = { ...pendingItemUpdates, [item.id]: item };
+		if (pendingItemUpdateTimer) clearTimeout(pendingItemUpdateTimer);
+		pendingItemUpdateTimer = setTimeout(async () => {
+			const updates = Object.values(pendingItemUpdates);
+			if (!currentList?.sharingId || updates.length === 0) return;
+			pendingItemUpdates = {};
+			pendingItemUpdateTimer = null;
+
+			activeRequestCount++;
+			try {
+				const updatedItem = await upsertSharedItem(currentList.id, updates[updates.length - 1]);
+				if (updatedItem) mergeIncomingItem(updatedItem);
+				hasSyncError = false;
+			} catch (error) {
+				console.error('Failed to update item on server:', error);
+				hasSyncError = true;
+			} finally {
+				activeRequestCount = Math.max(activeRequestCount - 1, 0);
+			}
+		}, 300);
+	}
+
+	async function refreshSharedList() {
+		if (!currentList?.sharingId) return;
+		isFetchingList = true;
+		try {
+			const latestList = await fetchSharedList(currentList.sharingId);
+			if (latestList) {
+				currentList = latestList;
+				saveListToStorage(latestList);
+				hasSyncError = false;
+			}
+		} catch (error) {
+			console.error('Failed to refresh shared list:', error);
+			hasSyncError = true;
+		} finally {
+			isFetchingList = false;
+		}
+	}
+
+	async function startRealtime() {
+		if (!currentList?.sharingId || !supabase) return;
+		const listId = currentList.id;
+		activeSubscription?.unsubscribe();
+		const channel = supabase
+			.channel(`list-sync-${listId}`)
+			.on(
+				'postgres_changes',
+				{ event: '*', schema: 'public', table: 'list_items', filter: `list_id=eq.${listId}` },
+				(payload) => {
+					const r = (payload.new ?? payload.old) as {
+						id: string;
+						name: string;
+						checked: boolean;
+						amount: number;
+						comment: string | null;
+						updated_at: string;
+						deleted_at: string | null;
+					};
+					mergeIncomingItem({
+						id: r.id,
+						name: r.name,
+						checked: r.checked,
+						amount: r.amount,
+						comment: r.comment ?? undefined,
+						updatedAt: r.updated_at,
+						deletedAt: r.deleted_at
+					});
+				}
+			);
+
+		channel.subscribe((status) => {
+			hasSyncError = status === 'CHANNEL_ERROR';
+		});
+
+		activeSubscription = channel;
+	}
+
+	function addItem() {
+		if (!currentList || !newItemName.trim()) return;
+		const trimmedName = newItemName.trim();
+		if (currentList.items.some((item) => item.name.toLowerCase() === trimmedName.toLowerCase())) {
+			toast.error('An item with this name already exists in the list!');
+			return;
+		}
+		const newItem = normalizeItem({
+			id: crypto.randomUUID(),
+			name: trimmedName,
+			checked: false,
+			amount: 1
+		});
+		applyLocalListUpdate({ ...currentList, items: [...currentList.items, newItem] });
+		queueItemUpdate(newItem);
+		newItemName = '';
+		requestAnimationFrame(() => newItemInput?.focus());
 	}
 
 	function toggleItem(itemId: string) {
-		const item = list?.items.find((item) => item.id === itemId);
-		if (item) {
-			item.checked = !item.checked;
-			saveListToStorage(list!);
-			updateItemOnServer(item);
-		}
+		if (!currentList) return;
+		let toggledItem: ShoppingItem | undefined;
+		const updatedItems = currentList.items.map((item) => {
+			if (item.id === itemId) {
+				toggledItem = normalizeItem({ ...item, checked: !item.checked });
+				return toggledItem;
+			}
+			return item;
+		});
+		if (!toggledItem) return;
+		applyLocalListUpdate({ ...currentList, items: updatedItems });
+		queueItemUpdate(toggledItem);
 	}
 
 	async function deleteItem(itemId: string) {
-		if (!list) return;
-
-		const itemToDelete = list.items.find((item) => item.id === itemId);
+		if (!currentList) return;
+		const itemToDelete = currentList.items.find((item) => item.id === itemId);
 		if (!itemToDelete) return;
+		applyLocalListUpdate({
+			...currentList,
+			items: currentList.items.filter((item) => item.id !== itemId)
+		});
 
-		try {
-			// Update local state immediately for better UX
-			list.items = list.items.filter((item) => item.id !== itemId);
-			saveListToStorage(list);
-
-			// Call server API if list is shared
-			await deleteItemOnServer(itemToDelete);
-		} catch (error) {
-			console.error('Failed to delete item:', error);
-			alert('Failed to delete item. Please try again.');
-		}
-	}
-
-	async function updateItemOnServer(item: ShoppingItem) {
-		if (!list?.sharingId) return;
-
-		activeRequestCount++;
-		isRefreshing = activeRequestCount > 0;
-
-		try {
-			const updatedList = await updateItemOnServerApi(list.sharingId, item);
-
-			// Only update the list if this is the last active request
-			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				if (updatedList) {
-					currentList.set(updatedList);
-				}
-				isRefreshing = false;
-			}
-		} catch (error) {
-			console.error('Failed to update item on server:', error);
-			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				isRefreshing = false;
+		if (currentList?.sharingId) {
+			activeRequestCount++;
+			try {
+				const deletedItem = await deleteSharedItem(currentList.id, itemToDelete);
+				if (activeRequestCount === 1 && deletedItem) mergeIncomingItem(deletedItem);
+				hasSyncError = false;
+			} catch (error) {
+				console.error('Failed to delete item on server:', error);
+				toast.error('Failed to delete item on server. Please try again.');
+				hasSyncError = true;
+			} finally {
+				activeRequestCount = Math.max(activeRequestCount - 1, 0);
 			}
 		}
-	}
-
-	async function deleteItemOnServer(item: ShoppingItem) {
-		if (!list?.sharingId) return;
-
-		activeRequestCount++;
-		isRefreshing = activeRequestCount > 0;
-
-		try {
-			const updatedList = await deleteItemOnServerApi(list.sharingId, item);
-
-			// Only update the list if this is the last active request
-			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				if (updatedList) {
-					currentList.set(updatedList);
-				}
-				isRefreshing = false;
-			}
-		} catch (error) {
-			console.error('Failed to delete item on server:', error);
-			activeRequestCount--;
-			if (activeRequestCount === 0) {
-				isRefreshing = false;
-			}
-			// Optionally show a user-friendly message or implement retry logic
-		}
-	}
-
-	function openEditModal(item: ShoppingItem) {
-		if (!item) return;
-		console.log('Opening edit modal for item:', item.name);
-		editingItem = { ...item }; // Create a copy to avoid direct mutation
 	}
 
 	function saveEditedItem(editedItem: ShoppingItem) {
-		if (!editedItem || !list) return;
-		// Check for duplicate names (excluding current item)
+		if (!editedItem || !currentList) return;
 		if (
-			list.items.some(
-				(item) =>
-					item.id !== editedItem.id && item.name.toLowerCase() === editedItem.name.toLowerCase()
+			currentList.items.some(
+				(i) => i.id !== editedItem.id && i.name.toLowerCase() === editedItem.name.toLowerCase()
 			)
 		) {
-			alert('An item with this name already exists in the list!');
+			toast.error('An item with this name already exists in the list!');
 			return;
 		}
-		try {
-			// Find and replace the item in the list
-			const itemIndex = list.items.findIndex((item) => item.id === editedItem.id);
-			if (itemIndex !== -1) {
-				list.items[itemIndex] = editedItem;
-				saveListToStorage(list);
-				updateItemOnServer(editedItem);
-			}
-			closeEditModal();
-		} catch (error) {
-			console.error('Failed to save edited item:', error);
-			alert('Failed to save changes. Please try again.');
-		}
-	}
-
-	function closeEditModal() {
+		const normalizedItem = normalizeItem(editedItem);
+		applyLocalListUpdate({
+			...currentList,
+			items: currentList.items.map((i) => (i.id === normalizedItem.id ? normalizedItem : i))
+		});
+		queueItemUpdate(normalizedItem);
 		editingItem = null;
 	}
 
-	// Sort: active items alphabetically, checked items at bottom
-	function sortedItems(items: ShoppingItem[]) {
-		if (!items || items.length === 0) {
-			return { active: [], checked: [] };
+	async function refreshConnectivity() {
+		const healthy = await getSupabaseHealth();
+		if (healthy && currentList?.sharingId) {
+			await refreshSharedList();
+			await startRealtime();
+		} else {
+			hasSyncError = true;
 		}
-		const active = items
-			.filter((item) => !item.checked)
-			.sort((a, b) => a.name.localeCompare(b.name));
-		const checked = items
-			.filter((item) => item.checked)
-			.sort((a, b) => a.name.localeCompare(b.name));
-		return { active, checked };
 	}
 </script>
 
-<main class="flex h-screen w-full flex-col">
+<main class="flex h-dvh w-full flex-col overflow-hidden">
 	<!-- Shopping List Header -->
 	<header class="flex h-[60px] w-full flex-row items-center gap-2 px-2">
 		<Button
@@ -211,8 +277,8 @@
 			<Menu size={24} />
 		</Button>
 
-		{#if list}
-			<h1 class="text-xl font-bold">{list.name}</h1>
+		{#if currentList}
+			<h1 class="text-xl font-bold">{currentList.name}</h1>
 		{:else}
 			<h1 class="text-xl font-bold">No List Selected</h1>
 		{/if}
@@ -221,22 +287,30 @@
 
 		{#if isRefreshing}
 			<Spinner />
+		{:else if currentList?.sharingId && hasSyncError}
+			<Button variant="outline" size="icon" onclick={refreshConnectivity}>
+				<RefreshCw />
+			</Button>
 		{/if}
 	</header>
 
-	{#if list}
-		{@const sorted = sortedItems(list.items)}
+	{#if isFetchingList}
+		<div class="flex-1 space-y-6 overflow-auto pb-4">
+			{#each Array(10) as _}
+				<Skeleton class="m-3 flex h-14 " />
+			{/each}
+		</div>
+	{:else if currentList}
 		<div class="flex-1 space-y-6 overflow-auto pb-4">
 			<!-- active items  -->
-			{#if sorted.active.length > 0}
+			{#if sortedList.active.length > 0}
 				<ul class="space-y-3" role="list" aria-label="Active items">
-					{#each sorted.active as item (item.id)}
+					{#each sortedList.active as item (item.id)}
 						<li animate:flip={{ duration: 300 }}>
 							<ShoppingListItem
 								{item}
 								onToggle={() => toggleItem(item.id)}
-								onDelete={() => deleteItem(item.id)}
-								onEdit={() => openEditModal(item)}
+								onEdit={() => (editingItem = { ...item })}
 							/>
 						</li>
 					{/each}
@@ -244,7 +318,7 @@
 			{/if}
 
 			<!-- completed items -->
-			{#if sorted.checked.length > 0}
+			{#if sortedList.checked.length > 0}
 				<div class="flex items-center">
 					<div class="flex-1 border-t"></div>
 					<span class="mx-4 text-sm font-medium" style="color: var(--muted-foreground);"
@@ -254,13 +328,12 @@
 				</div>
 
 				<ul class="space-y-3" role="list" aria-label="Completed items">
-					{#each sorted.checked as item (item.id)}
+					{#each sortedList.checked as item (item.id)}
 						<li animate:flip={{ duration: 300 }}>
 							<ShoppingListItem
 								{item}
 								onToggle={() => toggleItem(item.id)}
-								onDelete={() => deleteItem(item.id)}
-								onEdit={() => openEditModal(item)}
+								onEdit={() => (editingItem = { ...item })}
 							/>
 						</li>
 					{/each}
@@ -268,14 +341,13 @@
 			{/if}
 
 			<!-- empty -->
-			{#if sorted.active.length === 0 && sorted.checked.length === 0}
-				<div
-					class="flex h-32 flex-col items-center justify-center text-center"
-					style="color: var(--muted-foreground);"
-				>
-					<p class="text-lg">Your list is empty</p>
-					<p class="mt-1 text-sm">Add some items to get started!</p>
-				</div>
+			{#if sortedList.active.length === 0 && sortedList.checked.length === 0}
+				<Empty.Root class="h-full">
+					<Empty.Header>
+						<Empty.Title>Your list is empty</Empty.Title>
+						<Empty.Description>Add some items to get started!</Empty.Description>
+					</Empty.Header>
+				</Empty.Root>
 			{/if}
 		</div>
 
@@ -288,12 +360,30 @@
 				onkeydown={(e) => e.key === 'Enter' && addItem()}
 				aria-label="New item name"
 				maxlength={100}
-				disabled={!list}
+				disabled={!currentList}
 			/>
-			<Button onclick={addItem} aria-label="Add item">Add</Button>
+			<Button
+				class="[--radius:9999rem]"
+				variant="outline"
+				size="icon"
+				onclick={addItem}
+				tabindex={-1}
+				disabled={!newItemName.trim()}
+				aria-label="Add item"
+			>
+				<Plus />
+			</Button>
 		</footer>
 
-		<ItemEditModal item={editingItem} onSave={saveEditedItem} onClose={closeEditModal} />
+		<ItemEditModal
+			item={editingItem}
+			onSave={saveEditedItem}
+			onClose={() => (editingItem = null)}
+			onDelete={(item) => {
+				deleteItem(item.id);
+				editingItem = null;
+			}}
+		/>
 	{:else}
 		<div class="m-auto flex h-full w-full flex-col items-center justify-center p-8 text-center">
 			<NotebookPen size={48} />

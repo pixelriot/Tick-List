@@ -2,77 +2,82 @@
 	import { onMount } from 'svelte';
 	import { scale } from 'svelte/transition';
 	import { backOut } from 'svelte/easing';
-	import { Pen, Trash2, X, Check, Share2, Settings } from '@lucide/svelte';
+	import { Pen, Trash2, X, Check, Share2, Settings, List } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Item from '$lib/components/ui/item/index.js';
+	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { toast } from 'svelte-sonner';
 	import { invoke } from '@tauri-apps/api/core';
+	import { fetchSharedList, shareList, updateSharedListName } from '$lib/lists/supabase';
 	import {
-		currentList,
-		currentListId,
 		loadListsFromStorage,
 		saveListToStorage,
-		deleteListFromStorage,
-		fetchSharedList,
-		shareList,
-		updateSharedListName,
-		type ShoppingList
-	} from './ListsService';
+		deleteListFromStorage
+	} from '$lib/lists/storage';
+	import { createList, type ShoppingList } from '$lib/lists/types';
 
 	let {
 		onListSelected,
 		onShowSettings
-	}: { onListSelected: () => void; onShowSettings: () => void } = $props();
+	}: { onListSelected: (listId: string) => void; onShowSettings: () => void } = $props();
 
 	let lists = $state<ShoppingList[]>([]);
 
+	let isFetchingList = $state(false);
+
 	let newListName = $state('');
+	let listNameError = $state('');
 
 	let editingListId = $state<string | null>(null);
 	let editingListName = $state('');
 
 	onMount(() => {
 		lists = loadListsFromStorage();
-		$currentList = lists.find((list) => list.id === $currentListId) || null;
 	});
 
 	async function selectList(id: string) {
-		$currentListId = id;
-		$currentList = lists.find((list) => list.id === id) || null;
-		console.log('Selected list:', $state.snapshot($currentList));
-		if ($currentList) {
-			onListSelected();
+		const selectedList = lists.find((list) => list.id === id) || null;
+		console.log('Selected list:', $state.snapshot(selectedList));
+		if (selectedList) {
+			onListSelected(selectedList.id);
 		}
 	}
 
 	function addList() {
 		const trimmedName = newListName.trim();
-		if (!trimmedName) return;
+		if (!trimmedName) {
+			listNameError = 'Enter a list name or sharing ID.';
+			return;
+		}
 
-		// Check if trimmedName is exactly 8 numbers
-		if (/^\d{8}$/.test(trimmedName)) {
-			fetchList(trimmedName);
+		listNameError = '';
+
+		// Check if trimmedName is a share code (format: TL followed by 6 digits)
+		if (/^TL\d{6}$/i.test(trimmedName)) {
+			fetchList(trimmedName.toUpperCase());
 			newListName = '';
+			return;
+		}
+
+		if (lists.some((list) => list.name.toLowerCase() === trimmedName.toLowerCase())) {
+			listNameError = 'A list with this name already exists.';
 			return;
 		}
 
 		try {
 			console.log('Adding new list:', trimmedName);
 
-			let newList = {
-				id: crypto.randomUUID(),
-				name: trimmedName,
-				items: []
-			} as ShoppingList;
+			const newList = createList(trimmedName);
 			saveListToStorage(newList);
-			lists.push(newList);
+			lists = [...lists, newList];
 
 			newListName = '';
 		} catch (error) {
 			console.error('Failed to add list:', error);
-			alert('Failed to add list. Please try again.');
+			toast.error('Failed to add list. Please try again.');
 		}
 	}
 
@@ -87,12 +92,23 @@
 		try {
 			const editedList: ShoppingList | undefined = lists.find((list) => list.id === editingListId);
 			if (editedList) {
-				editedList.name = trimmedName;
-				saveListToStorage(editedList);
+				if (
+					lists.some(
+						(list) =>
+							list.id !== editedList.id && list.name.toLowerCase() === trimmedName.toLowerCase()
+					)
+				) {
+					listNameError = 'A list with this name already exists.';
+					return;
+				}
 
-				if (editedList.sharingId) {
+				const updatedList = { ...editedList, name: trimmedName };
+				saveListToStorage(updatedList);
+				lists = lists.map((list) => (list.id === editedList.id ? updatedList : list));
+
+				if (updatedList.sharingId) {
 					// Update the list on the server if it is shared
-					const success = await updateSharedListName(editedList.sharingId, trimmedName);
+					const success = await updateSharedListName(updatedList.id, trimmedName);
 					if (!success) {
 						throw new Error('Failed to update shared list name');
 					}
@@ -102,13 +118,14 @@
 			editingListName = '';
 		} catch (error) {
 			console.error('Failed to edit list:', error);
-			alert('Failed to edit list. Please try again.');
+			toast.error('Failed to edit list. Please try again.');
 		}
 	}
 
 	function cancelEdit() {
 		editingListId = null;
 		editingListName = '';
+		listNameError = '';
 	}
 
 	function deleteList(id: string) {
@@ -122,30 +139,36 @@
 		if (!confirm(confirmMessage)) return;
 
 		try {
-			if (id == $currentListId) {
-				$currentListId = ''; // Clear current list if deleting the active one
-			}
 			lists = lists.filter((list) => list.id !== id);
 			deleteListFromStorage(id);
 		} catch (error) {
 			console.error('Failed to delete list:', error);
-			alert('Failed to delete list. Please try again.');
+			toast.error('Failed to delete list. Please try again.');
 		}
 	}
 
 	async function fetchList(listId: string) {
 		console.log('Fetching list:', listId);
-		const fetchedList = await fetchSharedList(listId);
-		if (fetchedList) {
-			//check if list already exists
-			const existingList = lists.find((list) => list.id === fetchedList.id);
-			if (existingList) {
-				console.log('updating existing list');
-				Object.assign(existingList, fetchedList);
-			} else {
-				console.log('new list fetched');
-				lists.push(fetchedList);
+		isFetchingList = true;
+		try {
+			const fetchedList = await fetchSharedList(listId.toUpperCase());
+			if (fetchedList) {
+				//check if list already exists
+				const existingList = lists.find((list) => list.id === fetchedList.id);
+				if (existingList) {
+					console.log('updating existing list');
+					lists = lists.map((list) => (list.id === fetchedList.id ? fetchedList : list));
+				} else {
+					console.log('new list fetched');
+					lists = [...lists, fetchedList];
+				}
+				saveListToStorage(fetchedList);
 			}
+		} catch (error) {
+			console.error('Failed to fetch list:', error);
+			toast.error('Failed to fetch list. Please try again.');
+		} finally {
+			isFetchingList = false;
 		}
 	}
 
@@ -153,11 +176,8 @@
 		console.log('Share list:', $state.snapshot(list));
 		const updatedList = await shareList(list);
 		if (updatedList) {
-			// Update the list in the local array
-			const index = lists.findIndex((l) => l.id === list.id);
-			if (index !== -1) {
-				lists[index] = updatedList;
-			}
+			lists = lists.map((entry) => (entry.id === list.id ? updatedList : entry));
+			saveListToStorage(updatedList);
 		}
 	}
 
@@ -216,104 +236,128 @@
 			type="text"
 			placeholder="Enter a new list name or a sharing ID"
 			bind:value={newListName}
+			oninput={() => {
+				if (listNameError) listNameError = '';
+			}}
 			onkeydown={(e) => e.key === 'Enter' && addList()}
 			aria-label="New list name or list id"
 			maxlength={100}
 		/>
-		<Button onclick={addList}>Add</Button>
+		<Button onclick={addList} disabled={!newListName.trim()}>Add</Button>
 	</form>
+	{#if listNameError}
+		<p class="px-2 text-sm text-red-600">{listNameError}</p>
+	{/if}
 
-	<ul class="flex-1 space-y-3 overflow-y-auto p-2">
-		{#each lists as list (list.id)}
-			<li transition:scale={{ duration: 200, start: 0.4, easing: backOut }}>
-				<Item.Root variant="outline">
-					{#if editingListId === list.id}
-						<Item.Content>
-							<form class="flex w-full items-center space-x-2">
-								<Input
-									type="text"
-									placeholder="Edit list name"
-									bind:value={editingListName}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') saveEditList();
-										else if (e.key === 'Escape') cancelEdit();
-									}}
-									aria-label="Edit list name"
-									maxlength={100}
-									autofocus
-								/>
-								<Button
-									variant="outline"
-									size="icon"
-									onclick={saveEditList}
-									aria-label="Save changes"
-								>
-									<Check />
-								</Button>
-								<Button
-									variant="outline"
-									size="icon"
-									onclick={cancelEdit}
-									aria-label="Cancel editing"
-								>
-									<X />
-								</Button>
-							</form>
-						</Item.Content>
-					{:else}
-						<Item.Content onclick={() => selectList(list.id)}>
-							<Item.Title>{list.name}</Item.Title>
-							<Item.Description
-								>{#if list.items}
-									{list.items.filter((i: { checked: any }) => !i.checked).length} item{list.items.filter(
-										(i: { checked: any }) => !i.checked
-									).length === 1
-										? ''
-										: 's'} remaining
-								{/if}
-								{#if list.sharingId}
-									<Badge
-										variant="outline"
-										onclick={(e) => {
-											e.stopPropagation();
-											copySharingId(list.sharingId!);
+	{#if lists.length === 0 && !isFetchingList}
+		<Empty.Root>
+			<Empty.Header>
+				<Empty.Media variant="icon">
+					<List />
+				</Empty.Media>
+				<Empty.Title>No lists available</Empty.Title>
+				<Empty.Description>
+					Add a new list or enter a sharing ID to fetch a shared list
+				</Empty.Description>
+			</Empty.Header>
+		</Empty.Root>
+	{:else}
+		<ul class="flex-1 space-y-3 overflow-y-auto p-2">
+			{#each lists as list (list.id)}
+				<li transition:scale={{ duration: 200, start: 0.4, easing: backOut }}>
+					<Item.Root variant="outline">
+						{#if editingListId === list.id}
+							<Item.Content>
+								<form class="flex w-full items-center space-x-2">
+									<Input
+										type="text"
+										placeholder="Edit list name"
+										bind:value={editingListName}
+										onkeydown={(e) => {
+											if (e.key === 'Enter') saveEditList();
+											else if (e.key === 'Escape') cancelEdit();
 										}}
-										class="cursor-pointer">Shared</Badge
+										aria-label="Edit list name"
+										maxlength={100}
+										autofocus
+									/>
+									<Button
+										variant="outline"
+										size="icon"
+										onclick={saveEditList}
+										aria-label="Save changes"
 									>
-								{/if}</Item.Description
-							>
-						</Item.Content>
-						<Item.Actions>
-							<Button
-								variant="ghost"
-								size="icon"
-								onclick={() => onShareListClicked(list)}
-								aria-label={`Share ${list.name}`}
-							>
-								<Share2 size={24} />
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								onclick={() => startEditList(list.id, list.name)}
-								aria-label={`Edit ${list.name}`}
-							>
-								<Pen size={24} />
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								onclick={() => deleteList(list.id)}
-								aria-label={`Delete ${list.name}`}
-							>
-								<Trash2 size={24} />
-							</Button>
-						</Item.Actions>
-					{/if}
-				</Item.Root>
-			</li>
-		{/each}
-	</ul>
+										<Check />
+									</Button>
+									<Button
+										variant="outline"
+										size="icon"
+										onclick={cancelEdit}
+										aria-label="Cancel editing"
+									>
+										<X />
+									</Button>
+								</form>
+							</Item.Content>
+						{:else}
+							<Item.Content onclick={() => selectList(list.id)}>
+								<Item.Title>{list.name}</Item.Title>
+								<Item.Description
+									>{#if list.items}
+										{list.items.filter((i: { checked: any }) => !i.checked).length} item{list.items.filter(
+											(i: { checked: any }) => !i.checked
+										).length === 1
+											? ''
+											: 's'} remaining
+									{/if}
+									{#if list.sharingId}
+										<Badge
+											variant="outline"
+											onclick={(e) => {
+												e.stopPropagation();
+												copySharingId(list.sharingId!);
+											}}
+											class="cursor-pointer">Shared</Badge
+										>
+									{/if}</Item.Description
+								>
+							</Item.Content>
+							<Item.Actions>
+								<Button
+									variant="ghost"
+									size="icon"
+									onclick={() => onShareListClicked(list)}
+									aria-label={`Share ${list.name}`}
+								>
+									<Share2 size={24} />
+								</Button>
+								<Button
+									variant="ghost"
+									size="icon"
+									onclick={() => startEditList(list.id, list.name)}
+									aria-label={`Edit ${list.name}`}
+								>
+									<Pen size={24} />
+								</Button>
+								<Button
+									variant="ghost"
+									size="icon"
+									onclick={() => deleteList(list.id)}
+									aria-label={`Delete ${list.name}`}
+								>
+									<Trash2 size={24} />
+								</Button>
+							</Item.Actions>
+						{/if}
+					</Item.Root>
+				</li>
+			{/each}
+
+			{#if isFetchingList}
+				<Skeleton class=" flex h-20 " />
+			{/if}
+		</ul>
+	{/if}
 </main>
 
 <style>

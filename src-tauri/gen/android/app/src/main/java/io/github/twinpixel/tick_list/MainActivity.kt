@@ -1,4 +1,4 @@
-package io.github.twinpixel.ticklist
+package io.github.twinpixel.tick_list
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
