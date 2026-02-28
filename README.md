@@ -1,5 +1,5 @@
 # Tick List
-Create and share your shopping and other lists with your family and friends.
+Create and share your shopping and other lists with your family and friends. A minimalistic, mobile app build with Svelte, Tauri and shadcn-svelte. Syncs with your Supabase database.
 
 ## Development
 
@@ -28,6 +28,8 @@ npm install
 - `updated_at` is used for last-write-wins conflict resolution (latest timestamp wins).
 - The `touch_updated_at` trigger updates `updated_at` on every update for consistent server timestamps.
 - Indexes on `list_id`, `updated_at`, and `share_code` keep list sync and share lookups fast.
+- Row Level Security (RLS) is enabled on all Supabase tables and policies restrict list/item access to actively shared lists.
+- If your project already has the tables, re-run `src/lib/supabase/schema.sql` (or apply an equivalent migration) to add RLS policies.
 
 ### Development Commands
 
@@ -73,36 +75,4 @@ npm run tauri android build
 
 # Build iOS app (macOS only)
 npm run tauri ios build
-```
-
-##### Mobile Prerequisites
-- **Android**: Android Studio with SDK and NDK installed
-- **iOS**: Xcode (macOS only)
-- USB debugging enabled on device
-- Device connected via USB
-
-##### Mobile Debugging
-- **Web Debugging**: Use Chrome DevTools at `chrome://inspect/#devices`
-- **Native Debugging**: Open `src-tauri/gen/android` or `src-tauri/gen/ios` in Android Studio/Xcode
-- **Hot Reload**: Changes automatically update on device during development
-
-#### Code Quality
-```bash
-# Type checking and linting
-npm run check
-
-# Watch mode for type checking
-npm run check:watch
-
-# Lint code
-npm run lint
-
-# Format code
-npm run format
-```
-
-#### Build Commands
-```bash
-# Build for web deployment
-npm run build
 ```
