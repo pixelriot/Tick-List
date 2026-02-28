@@ -1,9 +1,7 @@
 # Tick List
 Create and share your shopping and other lists with your family and friends. A minimalistic, mobile app build with Svelte, Tauri and shadcn-svelte. Syncs with your Supabase database.
 
-<img width="300" height="610" alt="image" src="https://github.com/user-attachments/assets/f18f1077-8153-447a-a066-08ff4e2f343b" />
-<img width="300" height="610" alt="image" src="https://github.com/user-attachments/assets/05cd2402-5875-4058-a57e-c42eefee9984" />
-<img width="300" height="610" alt="image" src="https://github.com/user-attachments/assets/d0ca4ca7-35a9-4b39-a633-6c1941f21e48" />
+<img width="1076" height="1135" alt="image1-2" src="https://github.com/user-attachments/assets/8d3edcf7-d4c0-4a85-baae-a19f125f6a9e" />
 
 ## Development
 
