@@ -75,10 +75,29 @@ export async function shareList(list: ShoppingList): Promise<ShoppingList | null
 		deleted_at: null
 	};
 
-	const { error: listError } = await supabase.from('lists').upsert(listPayload);
-	if (listError) {
-		console.error('Failed to create list:', listError);
+	// make sure the list exists first. avoid upsert here because it can require
+	// row visibility via select policies before a share row exists.
+	const { error: insertListError } = await supabase.from('lists').insert(listPayload);
+	if (insertListError && insertListError.code !== '23505') {
+		console.error('Failed to create list:', insertListError);
 		return null;
+	}
+
+	// generate or fetch share code before touching items; policies require a share row
+	const shareCode = (await getShareCodeForList(normalized.id)) ?? (await createShareCode(normalized.id));
+	if (!shareCode) {
+		return null;
+	}
+
+	if (insertListError?.code === '23505') {
+		const { error: updateListError } = await supabase
+			.from('lists')
+			.update({ name: normalized.name, deleted_at: null })
+			.eq('id', normalized.id);
+
+		if (updateListError) {
+			console.error('Failed to update existing list after sharing:', updateListError);
+		}
 	}
 
 	if (normalized.items.length > 0) {
@@ -96,11 +115,6 @@ export async function shareList(list: ShoppingList): Promise<ShoppingList | null
 			console.error('Failed to create list items:', itemsError);
 			return null;
 		}
-	}
-
-	const shareCode = (await getShareCodeForList(normalized.id)) ?? (await createShareCode(normalized.id));
-	if (!shareCode) {
-		return null;
 	}
 
 	return {

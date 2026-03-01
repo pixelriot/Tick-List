@@ -70,6 +70,9 @@ create policy lists_update_shared
 			where list_shares.list_id = lists.id
 				and list_shares.deleted_at is null
 		)
+		and id is not null
+		and length(btrim(name)) > 0
+		and deleted_at is null
 	);
 
 drop policy if exists list_items_select_shared on list_items;
@@ -126,14 +129,9 @@ create policy list_shares_insert_open
 	on list_shares for insert
 	with check (
 		id is not null
+		and list_id is not null
 		and deleted_at is null
 		and share_code ~ '^TL[0-9]{6}$'
-		and exists (
-			select 1
-			from lists
-			where lists.id = list_shares.list_id
-				and lists.deleted_at is null
-		)
 	);
 
 drop policy if exists list_shares_update_shared on list_shares;
