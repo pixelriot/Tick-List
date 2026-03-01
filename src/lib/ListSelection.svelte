@@ -10,7 +10,7 @@
 	import * as Item from '$lib/components/ui/item/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { toast } from 'svelte-sonner';
-	import { invoke } from '@tauri-apps/api/core';
+	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { fetchSharedList, shareList, updateSharedListName } from '$lib/lists/supabase';
 	import {
 		loadListsFromStorage,
@@ -174,27 +174,43 @@
 
 	async function onShareListClicked(list: ShoppingList) {
 		console.log('Share list:', $state.snapshot(list));
-		const updatedList = await shareList(list);
-		if (updatedList) {
-			lists = lists.map((entry) => (entry.id === list.id ? updatedList : entry));
-			saveListToStorage(updatedList);
+		try {
+			const updatedList = await shareList(list);
+			if (updatedList) {
+				lists = lists.map((entry) => (entry.id === list.id ? updatedList : entry));
+				saveListToStorage(updatedList);
+				return;
+			}
+
+			toast.error('Failed to share list. Please try again.');
+		} catch (error) {
+			console.error('Failed to share list:', error);
+			toast.error('Failed to share list. Please try again.');
 		}
 	}
 
 	async function copySharingId(sharingId: string) {
+		if (navigator.clipboard?.writeText) {
+			try {
+				await navigator.clipboard.writeText(sharingId);
+				toast.success('Sharing ID copied to clipboard');
+				return;
+			} catch (error) {
+				console.error('Web clipboard copy failed:', error);
+			}
+		}
+
+		if (!isTauri()) {
+			toast.error('Failed to copy sharing ID');
+			return;
+		}
+
 		try {
 			await invoke('plugin:clipboard-manager|write_text', { text: sharingId });
 			toast.success('Sharing ID copied to clipboard');
 		} catch (error) {
 			console.error('Failed to copy to clipboard:', error);
-			// Fallback to web API if Tauri fails
-			try {
-				await navigator.clipboard.writeText(sharingId);
-				toast.success('Sharing ID copied to clipboard');
-			} catch (fallbackError) {
-				console.error('Fallback also failed:', fallbackError);
-				toast.error('Failed to copy sharing ID');
-			}
+			toast.error('Failed to copy sharing ID');
 		}
 	}
 </script>
