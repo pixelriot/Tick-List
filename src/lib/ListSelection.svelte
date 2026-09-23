@@ -10,6 +10,7 @@
 	import * as Item from '$lib/components/ui/item/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { toast } from 'svelte-sonner';
+	import Spinner from '$lib/components/ui/spinner/spinner.svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { fetchSharedList, shareList, updateSharedListName } from '$lib/lists/supabase';
 	import {
@@ -18,6 +19,7 @@
 		deleteListFromStorage
 	} from '$lib/lists/storage';
 	import { createList, type ShoppingList } from '$lib/lists/types';
+	import SharingModal from '$lib/SharingModal.svelte';
 
 	let {
 		onListSelected,
@@ -33,6 +35,9 @@
 
 	let editingListId = $state<string | null>(null);
 	let editingListName = $state('');
+
+	let sharingModalId = $state<string | null>(null);
+	let sharingInProgress = $state<string[]>([]);
 
 	onMount(() => {
 		lists = loadListsFromStorage();
@@ -174,18 +179,25 @@
 
 	async function onShareListClicked(list: ShoppingList) {
 		console.log('Share list:', $state.snapshot(list));
+		if (sharingInProgress.includes(list.id)) return;
+		sharingInProgress = [...sharingInProgress, list.id];
 		try {
 			const updatedList = await shareList(list);
 			if (updatedList) {
 				lists = lists.map((entry) => (entry.id === list.id ? updatedList : entry));
 				saveListToStorage(updatedList);
+				// Open sharing modal for the newly created sharing ID
+				if (updatedList.sharingId) {
+					sharingModalId = updatedList.sharingId;
+				}
 				return;
 			}
-
 			toast.error('Failed to share list. Please try again.');
 		} catch (error) {
 			console.error('Failed to share list:', error);
 			toast.error('Failed to share list. Please try again.');
+		} finally {
+			sharingInProgress = sharingInProgress.filter((id) => id !== list.id);
 		}
 	}
 
@@ -331,7 +343,7 @@
 											variant="outline"
 											onclick={(e) => {
 												e.stopPropagation();
-												copySharingId(list.sharingId!);
+												sharingModalId = list.sharingId!;
 											}}
 											class="cursor-pointer">Shared</Badge
 										>
@@ -339,14 +351,18 @@
 								>
 							</Item.Content>
 							<Item.Actions>
-								<Button
-									variant="ghost"
-									size="icon"
-									onclick={() => onShareListClicked(list)}
-									aria-label={`Share ${list.name}`}
-								>
-									<Share2 size={24} />
-								</Button>
+								{#if sharingInProgress.includes(list.id)}
+									<Spinner class="size-6" />
+								{:else if !list.sharingId}
+									<Button
+										variant="ghost"
+										size="icon"
+										onclick={() => onShareListClicked(list)}
+										aria-label={`Share ${list.name}`}
+									>
+										<Share2 size={24} />
+									</Button>
+								{/if}
 								<Button
 									variant="ghost"
 									size="icon"
@@ -374,6 +390,13 @@
 			{/if}
 		</ul>
 	{/if}
+
+	<!-- Sharing modal instance -->
+	<SharingModal
+		sharingId={sharingModalId}
+		onClose={() => (sharingModalId = null)}
+		onCopy={() => copySharingId(sharingModalId!)}
+	/>
 </main>
 
 <style>
