@@ -84,7 +84,8 @@ export async function shareList(list: ShoppingList): Promise<ShoppingList | null
 	}
 
 	// generate or fetch share code before touching items; policies require a share row
-	const shareCode = (await getShareCodeForList(normalized.id)) ?? (await createShareCode(normalized.id));
+	const shareCode =
+		(await getShareCodeForList(normalized.id)) ?? (await createShareCode(normalized.id));
 	if (!shareCode) {
 		return null;
 	}
@@ -187,12 +188,20 @@ export async function fetchSharedListById(
 	shareCode?: string
 ): Promise<ShoppingList | null> {
 	if (!supabase) return null;
-	const { data: listRow, error: listError } = await supabase
-		.from('lists')
-		.select('id,name,updated_at,deleted_at')
-		.eq('id', listId)
-		.is('deleted_at', null)
-		.maybeSingle();
+	const [{ data: listRow, error: listError }, { data: itemRows, error: itemsError }] =
+		await Promise.all([
+			supabase
+				.from('lists')
+				.select('id,name,updated_at,deleted_at')
+				.eq('id', listId)
+				.is('deleted_at', null)
+				.maybeSingle(),
+			supabase
+				.from('list_items')
+				.select('id,list_id,name,checked,amount,comment,updated_at,deleted_at')
+				.eq('list_id', listId)
+				.is('deleted_at', null)
+		]);
 
 	if (listError || !listRow) {
 		if (listError) {
@@ -200,12 +209,6 @@ export async function fetchSharedListById(
 		}
 		return null;
 	}
-
-	const { data: itemRows, error: itemsError } = await supabase
-		.from('list_items')
-		.select('id,list_id,name,checked,amount,comment,updated_at,deleted_at')
-		.eq('list_id', listId)
-		.is('deleted_at', null);
 
 	if (itemsError) {
 		console.error('Failed to fetch list items:', itemsError);
@@ -220,8 +223,20 @@ export async function fetchSharedListById(
 	};
 }
 
-export async function fetchSharedList(shareCode: string): Promise<ShoppingList | null> {
+export async function fetchSharedList(
+	shareCode: string,
+	knownListId?: string
+): Promise<ShoppingList | null> {
 	if (!supabase) return null;
+	if (knownListId) {
+		// List id is already cached locally: resolve the share and fetch the list in parallel,
+		// then only accept the result if the share still points to that list.
+		const [resolvedId, list] = await Promise.all([
+			resolveShareCode(shareCode),
+			fetchSharedListById(knownListId, shareCode)
+		]);
+		return resolvedId === knownListId ? list : null;
+	}
 	const listId = await resolveShareCode(shareCode);
 	if (!listId) return null;
 	return fetchSharedListById(listId, shareCode);
@@ -272,6 +287,33 @@ export async function upsertSharedItem(
 	return mapItemRow(data as ItemRow);
 }
 
+export async function upsertSharedItems(
+	listId: string,
+	items: ShoppingItem[]
+): Promise<ShoppingItem[]> {
+	if (!supabase || items.length === 0) return [];
+	const payload: ListItemInsert[] = items.map((item) => {
+		const normalized = normalizeItem(item);
+		return {
+			id: normalized.id,
+			list_id: listId,
+			name: normalized.name,
+			checked: normalized.checked,
+			amount: normalized.amount,
+			comment: normalized.comment ?? null,
+			deleted_at: normalized.deletedAt ?? null
+		};
+	});
+
+	const { data, error } = await supabase
+		.from('list_items')
+		.upsert(payload)
+		.select('id,list_id,name,checked,amount,comment,updated_at,deleted_at');
+
+	if (error) throw error;
+	return (data as ItemRow[]).map(mapItemRow);
+}
+
 export async function deleteSharedItem(
 	listId: string,
 	item: ShoppingItem
@@ -281,11 +323,7 @@ export async function deleteSharedItem(
 
 export async function getSupabaseHealth(): Promise<boolean> {
 	if (!supabase) return false;
-	const { error } = await supabase
-		.from('lists')
-		.select('id')
-		.limit(1)
-		.maybeSingle();
+	const { error } = await supabase.from('lists').select('id').limit(1).maybeSingle();
 
 	if (error) {
 		console.error('Supabase health check failed:', error);

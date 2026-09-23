@@ -14,7 +14,7 @@
 		deleteSharedItem,
 		fetchSharedList,
 		getSupabaseHealth,
-		upsertSharedItem
+		upsertSharedItems
 	} from '$lib/lists/supabase';
 	import { saveListToStorage } from '$lib/lists/storage';
 	import { normalizeItem, type ShoppingList, type ShoppingItem } from '$lib/lists/types';
@@ -59,8 +59,7 @@
 			hasSyncError = true;
 			return;
 		}
-		await refreshSharedList();
-		await startRealtime();
+		await Promise.all([startRealtime(), refreshSharedList()]);
 	});
 
 	onDestroy(() => {
@@ -99,34 +98,52 @@
 		if (!currentList?.sharingId) return;
 		pendingItemUpdates = { ...pendingItemUpdates, [item.id]: item };
 		if (pendingItemUpdateTimer) clearTimeout(pendingItemUpdateTimer);
-		pendingItemUpdateTimer = setTimeout(async () => {
-			const updates = Object.values(pendingItemUpdates);
-			if (!currentList?.sharingId || updates.length === 0) return;
-			pendingItemUpdates = {};
-			pendingItemUpdateTimer = null;
+		pendingItemUpdateTimer = setTimeout(flushPendingItemUpdates, 300);
+	}
 
-			activeRequestCount++;
-			try {
-				const updatedItem = await upsertSharedItem(currentList.id, updates[updates.length - 1]);
-				if (updatedItem) mergeIncomingItem(updatedItem);
-				hasSyncError = false;
-			} catch (error) {
-				console.error('Failed to update item on server:', error);
-				hasSyncError = true;
-			} finally {
-				activeRequestCount = Math.max(activeRequestCount - 1, 0);
-			}
-		}, 300);
+	async function flushPendingItemUpdates() {
+		if (pendingItemUpdateTimer) clearTimeout(pendingItemUpdateTimer);
+		pendingItemUpdateTimer = null;
+		const updates = Object.values(pendingItemUpdates);
+		if (!currentList?.sharingId || updates.length === 0) return;
+		pendingItemUpdates = {};
+
+		activeRequestCount++;
+		try {
+			const updatedItems = await upsertSharedItems(currentList.id, updates);
+			// Items edited again while the request was in flight are pending; don't revert them.
+			updatedItems.filter((item) => !pendingItemUpdates[item.id]).forEach(mergeIncomingItem);
+			hasSyncError = false;
+		} catch (error) {
+			console.error('Failed to update items on server:', error);
+			// Keep failed updates pending (unless superseded meanwhile) so the next sync sends them.
+			pendingItemUpdates = {
+				...Object.fromEntries(updates.map((item) => [item.id, item])),
+				...pendingItemUpdates
+			};
+			hasSyncError = true;
+		} finally {
+			activeRequestCount = Math.max(activeRequestCount - 1, 0);
+		}
 	}
 
 	async function refreshSharedList() {
 		if (!currentList?.sharingId) return;
 		isFetchingList = true;
+		// The cached list stays visible and editable while fetching. Local updates replace item
+		// objects, so comparing references against this snapshot finds changes made meanwhile.
+		const itemsBeforeFetch = currentList.items;
 		try {
-			const latestList = await fetchSharedList(currentList.sharingId);
-			if (latestList) {
-				currentList = latestList;
-				saveListToStorage(latestList);
+			const latestList = await fetchSharedList(currentList.sharingId, currentList.id);
+			if (latestList && currentList) {
+				const snapshot = new Map(itemsBeforeFetch.map((item) => [item.id, item]));
+				const currentIds = new Set(currentList.items.map((item) => item.id));
+				const changedLocally = currentList.items.filter((item) => snapshot.get(item.id) !== item);
+				const changedIds = new Set(changedLocally.map((item) => item.id));
+				const serverItems = latestList.items.filter(
+					(item) => !changedIds.has(item.id) && !(snapshot.has(item.id) && !currentIds.has(item.id))
+				);
+				applyLocalListUpdate({ ...latestList, items: [...serverItems, ...changedLocally] });
 				hasSyncError = false;
 			}
 		} catch (error) {
@@ -256,6 +273,7 @@
 	async function refreshConnectivity() {
 		const healthy = await getSupabaseHealth();
 		if (healthy && currentList?.sharingId) {
+			await flushPendingItemUpdates();
 			await refreshSharedList();
 			await startRealtime();
 		} else {
@@ -285,7 +303,7 @@
 
 		<div class="flex-1"></div>
 
-		{#if isRefreshing}
+		{#if isRefreshing || isFetchingList}
 			<Spinner />
 		{:else if currentList?.sharingId && hasSyncError}
 			<Button variant="outline" size="icon" onclick={refreshConnectivity}>
@@ -294,7 +312,7 @@
 		{/if}
 	</header>
 
-	{#if isFetchingList}
+	{#if isFetchingList && !currentList?.items.length}
 		<div class="flex-1 space-y-6 overflow-auto pb-4">
 			{#each Array(10) as _}
 				<Skeleton class="m-3 flex h-14 " />
