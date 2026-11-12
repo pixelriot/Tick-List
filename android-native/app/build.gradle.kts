@@ -29,8 +29,8 @@ android {
         applicationId = "com.pixelriot.ticklist"
         minSdk = 26
         targetSdk = 35
-        versionCode = 79
-        versionName = "0.7.9"
+        versionCode = 80
+        versionName = "0.7.10"
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseConfig("SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseConfig("SUPABASE_ANON_KEY")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

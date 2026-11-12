@@ -1,5 +1,9 @@
 package com.pixelriot.ticklist.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,7 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -27,23 +33,34 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pixelriot.ticklist.TickListViewModel
 import com.pixelriot.ticklist.data.ShoppingItem
-import com.pixelriot.ticklist.data.partitionItems
 import com.pixelriot.ticklist.ui.theme.JetBrainsMono
 import com.pixelriot.ticklist.ui.theme.LocalOmarchyColors
+import kotlinx.coroutines.delay
+import java.text.Collator
+
+private const val CompletedHeaderKey = "completed"
+private const val HoldBeforeMoveMillis = 140L
+private val MoveSpec = tween<IntOffset>(durationMillis = 260, easing = FastOutSlowInEasing)
+private val FadeSpec = tween<Float>(durationMillis = 180)
+private val FeedbackSpec = tween<Float>(durationMillis = 140)
 
 @Composable
 fun DetailScreen(vm: TickListViewModel) {
@@ -57,7 +74,58 @@ fun DetailScreen(vm: TickListViewModel) {
     val list = lists.find { it.id == currentId }
     var draft by remember { mutableStateOf("") }
     val spinning = fetching || active > 0
-    val (activeItems, checkedItems) = partitionItems(list?.items.orEmpty())
+    val items = list?.items.orEmpty()
+    val targetSections = remember(items) { items.associate { it.id to it.checked } }
+    var shownSections by remember(list?.id) { mutableStateOf(targetSections) }
+    var scrollAnchorKey by remember(list?.id) { mutableStateOf<Any?>(null) }
+    val listState = rememberLazyListState()
+    val collator = remember { Collator.getInstance() }
+    val activeItems = remember(items, shownSections, collator) {
+        items
+            .filter { (shownSections[it.id] ?: it.checked).not() }
+            .sortedWith(compareBy(collator) { it.name })
+    }
+    val checkedItems = remember(items, shownSections, collator) {
+        items
+            .filter { shownSections[it.id] ?: it.checked }
+            .sortedWith(compareBy(collator) { it.name })
+    }
+    val rowKeys = remember(activeItems, checkedItems) {
+        buildList {
+            if (activeItems.isEmpty() && checkedItems.isEmpty()) add("empty")
+            activeItems.forEach { add(it.id) }
+            if (checkedItems.isNotEmpty()) {
+                add(CompletedHeaderKey)
+                checkedItems.forEach { add(it.id) }
+            }
+        }
+    }
+
+    LaunchedEffect(targetSections) {
+        val shownNow = shownSections
+        val relocated = targetSections.filter { (id, checked) ->
+            val current = shownNow[id]
+            current != null && current != checked
+        }
+        if (relocated.isEmpty()) {
+            if (shownNow != targetSections) shownSections = targetSections
+            return@LaunchedEffect
+        }
+        delay(HoldBeforeMoveMillis)
+        scrollAnchorKey = successorAnchor(listState, relocated.keys)
+        shownSections = targetSections
+    }
+
+    val anchorKey = scrollAnchorKey
+    if (anchorKey != null) {
+        val index = rowKeys.indexOf(anchorKey).let { if (it < 0) 0 else it }
+        SideEffect {
+            // LazyColumn keeps the first visible key pinned. A checked row that was
+            // that key would drag the viewport down to the completed section.
+            listState.pinIndexWithoutFollowingKey(index, listState.firstVisibleItemScrollOffset)
+            scrollAnchorKey = null
+        }
+    }
 
     Column(
         Modifier
@@ -113,13 +181,17 @@ fun DetailScreen(vm: TickListViewModel) {
             else -> {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    state = listState,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (activeItems.isEmpty() && checkedItems.isEmpty()) {
-                        item {
+                        item(key = "empty", contentType = "empty") {
                             Column(
-                                Modifier.fillMaxWidth().padding(32.dp),
+                                Modifier
+                                    .animateItem(FadeSpec, MoveSpec, FadeSpec)
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 Text(
@@ -138,20 +210,26 @@ fun DetailScreen(vm: TickListViewModel) {
                             }
                         }
                     }
-                    items(activeItems, key = { it.id }) { item ->
+                    items(activeItems, key = { it.id }, contentType = { "row" }) { item ->
                         ItemRow(
                             item = item,
                             onToggle = { vm.toggleItem(item.id) },
                             onEdit = { vm.openEditor(item) },
+                            modifier = Modifier.animateItem(FadeSpec, MoveSpec, FadeSpec),
                         )
                     }
                     if (checkedItems.isNotEmpty()) {
-                        item { OmniDividerLabel("COMPLETED") }
-                        items(checkedItems, key = { it.id }) { item ->
+                        item(key = CompletedHeaderKey, contentType = "header") {
+                            Box(Modifier.animateItem(FadeSpec, MoveSpec, FadeSpec)) {
+                                OmniDividerLabel("COMPLETED")
+                            }
+                        }
+                        items(checkedItems, key = { it.id }, contentType = { "row" }) { item ->
                             ItemRow(
                                 item = item,
                                 onToggle = { vm.toggleItem(item.id) },
                                 onEdit = { vm.openEditor(item) },
+                                modifier = Modifier.animateItem(FadeSpec, MoveSpec, FadeSpec),
                             )
                         }
                     }
@@ -195,15 +273,63 @@ fun DetailScreen(vm: TickListViewModel) {
     }
 }
 
+private object TopOfList
+
+private fun successorAnchor(state: LazyListState, movingKeys: Set<String>): Any? {
+    val visible = state.layoutInfo.visibleItemsInfo
+    val firstKey = visible.firstOrNull()?.key as? String ?: return null
+    if (firstKey !in movingKeys) return null
+    return visible.firstOrNull { item ->
+        val key = item.key
+        key !is String || key !in movingKeys
+    }?.key ?: TopOfList
+}
+
+private fun LazyListState.pinIndexWithoutFollowingKey(index: Int, offset: Int) {
+    val safeIndex = index.coerceAtLeast(0)
+    try {
+        val position = javaClass.getDeclaredField("scrollPosition").apply { isAccessible = true }.get(this)
+        val method = position.javaClass.getDeclaredMethod(
+            "requestPositionAndForgetLastKnownKey",
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+        )
+        method.invoke(position, safeIndex, offset.coerceAtLeast(0))
+    } catch (_: Exception) {
+        requestScrollToItem(safeIndex, offset.coerceAtLeast(0))
+    }
+}
+
 @Composable
 private fun ItemRow(
     item: ShoppingItem,
     onToggle: () -> Unit,
     onEdit: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = LocalOmarchyColors.current
+    val textColor by animateColorAsState(
+        if (item.checked) colors.dim else colors.foreground,
+        tween(durationMillis = 140),
+        label = "itemText",
+    )
+    val boxColor by animateColorAsState(
+        if (item.checked) colors.accent else colors.backgroundAlt,
+        tween(durationMillis = 140),
+        label = "checkFill",
+    )
+    val markColor by animateColorAsState(
+        if (item.checked) colors.accent else colors.border,
+        tween(durationMillis = 140),
+        label = "checkBorder",
+    )
+    val checkAlpha by animateFloatAsState(
+        if (item.checked) 1f else 0f,
+        FeedbackSpec,
+        label = "check",
+    )
     Row(
-        Modifier
+        modifier
             .padding(horizontal = 12.dp)
             .fillMaxWidth()
             .border(1.dp, colors.border, RoundedCornerShape(2.dp))
@@ -220,18 +346,16 @@ private fun ItemRow(
             Box(
                 Modifier
                     .size(18.dp)
-                    .border(1.dp, if (item.checked) colors.accent else colors.border, RoundedCornerShape(2.dp))
-                    .background(if (item.checked) colors.accent else colors.backgroundAlt),
+                    .border(1.dp, markColor, RoundedCornerShape(2.dp))
+                    .background(boxColor),
                 contentAlignment = Alignment.Center,
             ) {
-                if (item.checked) {
-                    Icon(
-                        Icons.Outlined.Check,
-                        contentDescription = null,
-                        tint = colors.onAccent,
-                        modifier = Modifier.size(14.dp),
-                    )
-                }
+                Icon(
+                    Icons.Outlined.Check,
+                    contentDescription = null,
+                    tint = colors.onAccent,
+                    modifier = Modifier.size(14.dp).alpha(checkAlpha),
+                )
             }
         }
         Column(
@@ -245,7 +369,7 @@ private fun ItemRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = item.name,
-                    color = if (item.checked) colors.dim else colors.foreground,
+                    color = textColor,
                     fontFamily = JetBrainsMono,
                     fontSize = 15.sp,
                     textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None,

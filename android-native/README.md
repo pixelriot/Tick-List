@@ -1,13 +1,13 @@
 # Tick List for Android
 
-Native Android port of Tick List 0.7.9. The SvelteKit and Tauri app in the repository root is unchanged.
+Native Android port of Tick List. The Android `versionName` is 0.7.10. The SvelteKit and Tauri app in the repository root is unchanged.
 
 The UI follows the Omarchy desktop: dark by default, JetBrains Mono, flat panels, 1px borders, and 2dp corners. Tokyo Night is the default palette (the Omarchy default). Catppuccin, Gruvbox, Nord, Everforest, and Kanagawa are selectable in settings, each with a dark and a light variant. Appearance can follow dark, light, or the system setting.
 
 ## What it does
 
 - Lists overview: create, rename, and delete lists. Deleting a list removes it from this device only, same as the web app.
-- List detail: add, check, edit, and delete items. Unchecked and completed items are sorted by name. Long-press a row or use the edit icon. Closing the edit sheet saves; amount `0` becomes `1`.
+- List detail: add, check, edit, and delete items. Unchecked and completed items are sorted by name. Checking an item strikes it in place, then moves it into the completed section without scrolling the viewport. Long-press a row or use the edit icon. Closing the edit sheet saves; amount `0` becomes `1`.
 - Sharing: share codes are `TL` plus six digits. Enter a code in the new-list field to join. The share sheet copies the code.
 - Offline cache: lists are stored as JSON on disk and shown immediately. Shared lists stay visible while a refresh runs.
 - Sync: Supabase tables `lists`, `list_items`, and `list_shares`. Soft deletes use `deleted_at`. Item conflicts are last-write-wins on `updated_at`. Item edits are debounced (300ms) and sent with upserts. Realtime listens to `list_items` for the open shared list.
