@@ -1,0 +1,12 @@
+# Copy to local.properties. This file is not committed.
+#
+# sdk.dir is optional when ANDROID_HOME or ANDROID_SDK_ROOT is set.
+# sdk.dir=/path/to/Android/Sdk
+
+# Public Supabase client config. Leave blank to build an offline-only APK.
+# Resolution order in app/build.gradle.kts:
+#   1. Gradle project property (-PSUPABASE_URL=... -PSUPABASE_ANON_KEY=...)
+#   2. Environment variable (SUPABASE_URL, SUPABASE_ANON_KEY)
+#   3. These local.properties keys
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
